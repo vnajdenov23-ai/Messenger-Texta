@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Texta</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ==================== ЭКРАН АВТОРИЗАЦИИ ==================== -->
+  <section id="screen-auth" class="screen screen-auth active">
+    <div class="auth-wrap">
+
+      <div class="auth-logo">
+        <div class="auth-logo-mark">T</div>
+        <h1>Texta</h1>
+        <p class="auth-sub">Быстрый и лёгкий мессенджер</p>
+      </div>
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login" id="tab-login">Вход</button>
+        <button class="auth-tab" data-tab="register" id="tab-register">Регистрация</button>
+      </div>
+
+      <!-- ВХОД -->
+      <form id="form-login" class="auth-form active">
+        <label class="field">
+          <span class="field-label">Username</span>
+          <input type="text" id="login-username" placeholder="@username" autocomplete="off" required>
+        </label>
+        <label class="field">
+          <span class="field-label">Секретный код</span>
+          <input type="text" id="login-code" placeholder="TC-000000" autocomplete="off" required>
+        </label>
+        <div class="field-error" id="login-error"></div>
+        <button type="submit" class="btn-primary" id="btn-login">Войти</button>
+      </form>
+
+      <!-- РЕГИСТРАЦИЯ -->
+      <form id="form-register" class="auth-form">
+        <label class="field">
+          <span class="field-label">Username (уникальный)</span>
+          <input type="text" id="reg-username" placeholder="@username" autocomplete="off" required>
+        </label>
+        <label class="field">
+          <span class="field-label">Отображаемое имя</span>
+          <input type="text" id="reg-displayname" placeholder="Как вас видят другие" autocomplete="off" required>
+        </label>
+        <div class="field-error" id="reg-error"></div>
+        <button type="submit" class="btn-primary" id="btn-register">Создать аккаунт</button>
+      </form>
+
+    </div>
+  </section>
+
+  <!-- ==================== ЭКРАН: ВЫДАННЫЙ КОД ==================== -->
+  <section id="screen-code" class="screen screen-code">
+    <div class="code-wrap">
+      <div class="code-icon">✓</div>
+      <h2>Аккаунт создан</h2>
+      <p class="code-hint">Это ваш секретный код входа.<br>Сохраните его — он потребуется для авторизации на других устройствах.</p>
+      <div class="code-box" id="issued-code">TC-000000</div>
+      <button class="btn-secondary" id="btn-copy-code">Скопировать код</button>
+      <button class="btn-primary" id="btn-continue">Продолжить в Texta</button>
+    </div>
+  </section>
+
+  <!-- ==================== ГЛАВНЫЙ ЭКРАН: СПИСОК ЧАТОВ ==================== -->
+  <section id="screen-chats" class="screen screen-chats">
+
+    <header class="topbar">
+      <h1 class="topbar-title">Texta</h1>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="btn-open-search" aria-label="Поиск">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 5L20.49 19l-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-open-settings" aria-label="Настройки">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M19.14 12.94a7.14 7.14 0 0 0 .06-.94 7.14 7.14 0 0 0-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.62-.06.94s.02.63.06.94L2.83 14.5a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.42.32.6.22l2.39-.96c.49.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.24.1.46.02.6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.56zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Строка поиска (скрыта, появляется поверх) -->
+    <div class="search-bar" id="search-bar">
+      <button class="icon-btn" id="btn-close-search" aria-label="Закрыть поиск">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg>
+      </button>
+      <input type="text" id="search-input" placeholder="Найти по @username или имени...">
+    </div>
+    <div class="search-results" id="search-results"></div>
+
+    <!-- Список чатов -->
+    <div class="chat-list" id="chat-list">
+
+      <button class="chat-row chat-row-fav" id="row-favorites" data-username="__favorites__">
+        <div class="chat-avatar avatar-fav">
+          <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+        </div>
+        <div class="chat-row-body">
+          <div class="chat-row-top">
+            <span class="chat-row-name">Избранное</span>
+          </div>
+          <div class="chat-row-preview" id="fav-preview">Личные заметки</div>
+        </div>
+      </button>
+
+      <div class="chat-list-empty" id="chat-list-empty">
+        <p>Тут пока ничего нет.<br>Используйте поиск по лупе выше, чтобы найти собеседника.</p>
+      </div>
+
+      <div id="dynamic-chats"></div>
+
+    </div>
+
+  </section>
+
+  <!-- ==================== ЭКРАН ЧАТА ==================== -->
+  <section id="screen-chat" class="screen screen-chat">
+    <header class="chat-header">
+      <button class="icon-btn" id="btn-back-to-list" aria-label="Назад">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg>
+      </button>
+      <div class="chat-header-avatar" id="chat-header-avatar">T</div>
+      <div class="chat-header-info">
+        <div class="chat-header-name" id="chat-header-name">Имя</div>
+        <div class="chat-header-sub" id="chat-header-sub">@username</div>
+      </div>
+    </header>
+
+    <div class="messages-area" id="messages-area"></div>
+
+    <form class="input-bar" id="form-send">
+      <input type="text" id="message-input" placeholder="Сообщение..." autocomplete="off">
+      <button type="submit" class="send-btn" id="btn-send" aria-label="Отправить">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+      </button>
+    </form>
+  </section>
+
+  <!-- ==================== ЭКРАН НАСТРОЕК ==================== -->
+  <section id="screen-settings" class="screen screen-settings">
+    <header class="chat-header">
+      <button class="icon-btn" id="btn-back-from-settings" aria-label="Назад">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg>
+      </button>
+      <div class="chat-header-info">
+        <div class="chat-header-name">Настройки профиля</div>
+      </div>
+    </header>
+
+    <div class="settings-body">
+      <div class="settings-avatar" id="settings-avatar">T</div>
+
+      <label class="field">
+        <span class="field-label">Отображаемое имя</span>
+        <input type="text" id="settings-displayname">
+      </label>
+
+      <label class="field">
+        <span class="field-label">Username</span>
+        <input type="text" id="settings-username" disabled>
+      </label>
+
+      <label class="field">
+        <span class="field-label">Секретный код входа</span>
+        <input type="text" id="settings-code" disabled>
+      </label>
+
+      <div class="field-error" id="settings-error"></div>
+      <div class="field-success" id="settings-success"></div>
+
+      <button class="btn-primary" id="btn-save-settings">Сохранить изменения</button>
+      <button class="btn-secondary btn-danger" id="btn-logout">Выйти из аккаунта</button>
+    </div>
+  </section>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
