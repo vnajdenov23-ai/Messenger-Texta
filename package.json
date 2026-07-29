@@ -1,12 +1,13 @@
 {
   "name": "texta",
-  "version": "1.0.0",
-  "description": "Texta — лёгкий веб-мессенджер (Node.js + Express + Vanilla JS)",
+  "version": "1.2.0",
+  "description": "Texta — лёгкий веб-мессенджер (Node.js + Express + Upstash Redis)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "@upstash/redis": "^1.31.6"
   }
 }
