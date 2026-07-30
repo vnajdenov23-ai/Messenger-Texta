@@ -19,7 +19,8 @@ const { Redis } = require('@upstash/redis');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
+// Аватарки (base64-фото) могут быть увесистыми — увеличиваем лимит тела запроса
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname))); // отдаём index.html, style.css, app.js
 
 // ---------- Подключение к Upstash Redis ----------
@@ -36,6 +37,8 @@ const redis = new Redis({
 });
 
 const USERS_INDEX_KEY = 'texta:users:index'; // множество всех username (для поиска)
+const DELETE_FOR_EVERYONE_WINDOW_MS = 60 * 60 * 1000; // 1 час
+const MAX_AVATAR_LENGTH = 400000; // ограничение на размер base64-фото (~300 КБ файла)
 
 function generateCode() {
   const num = Math.floor(100000 + Math.random() * 900000); // 6 цифр
@@ -47,7 +50,12 @@ function cleanUsername(username) {
 }
 
 function publicUser(u) {
-  return { username: u.username, displayName: u.displayName };
+  return {
+    username: u.username,
+    displayName: u.displayName,
+    avatarType: u.avatarType || 'initial',
+    avatarValue: u.avatarValue || ''
+  };
 }
 
 function chatIdBetween(a, b) {
@@ -61,6 +69,11 @@ async function getUser(username) {
 async function setUser(user) {
   await redis.set('texta:user:' + user.username, user);
   await redis.sadd(USERS_INDEX_KEY, user.username);
+}
+
+async function isBlocked(blockerUsername, targetUsername) {
+  const blocked = await redis.smembers('texta:blocked:' + cleanUsername(blockerUsername));
+  return blocked.includes(cleanUsername(targetUsername));
 }
 
 // ---------- API: регистрация ----------
@@ -94,7 +107,14 @@ app.post('/api/register', async (req, res) => {
     }
 
     const code = generateCode();
-    const user = { username: cleanU, displayName, code, createdAt: Date.now() };
+    const user = {
+      username: cleanU,
+      displayName,
+      code,
+      createdAt: Date.now(),
+      avatarType: 'initial',
+      avatarValue: ''
+    };
     await setUser(user);
 
     return res.json({ success: true, user: { username: cleanU, displayName, code } });
@@ -120,33 +140,46 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Неверный @username или код входа.' });
     }
 
-    return res.json({ success: true, user: publicUser(user) });
+    return res.json({ success: true, user: { ...publicUser(user), code: user.code } });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: 'Ошибка сервера.' });
   }
 });
 
-// ---------- API: обновление профиля ----------
+// ---------- API: обновление профиля (имя + аватарка) ----------
 
 app.post('/api/profile/update', async (req, res) => {
   try {
-    const { username, code, displayName } = req.body || {};
+    const { username, code, displayName, avatarType, avatarValue } = req.body || {};
 
     const user = await getUser(username);
     if (!user || user.code.toUpperCase() !== String(code).trim().toUpperCase()) {
       return res.status(401).json({ success: false, message: 'Не удалось подтвердить личность.' });
     }
 
-    const newName = String(displayName || '').trim();
-    if (newName.length < 1 || newName.length > 40) {
-      return res.status(400).json({ success: false, message: 'Некорректное имя.' });
+    if (displayName !== undefined) {
+      const newName = String(displayName).trim();
+      if (newName.length < 1 || newName.length > 40) {
+        return res.status(400).json({ success: false, message: 'Некорректное имя.' });
+      }
+      user.displayName = newName;
     }
 
-    user.displayName = newName;
+    if (avatarType !== undefined) {
+      if (!['initial', 'emoji', 'photo'].includes(avatarType)) {
+        return res.status(400).json({ success: false, message: 'Некорректный тип аватарки.' });
+      }
+      if (avatarType === 'photo' && String(avatarValue || '').length > MAX_AVATAR_LENGTH) {
+        return res.status(400).json({ success: false, message: 'Фото слишком большое, выбери другое.' });
+      }
+      user.avatarType = avatarType;
+      user.avatarValue = avatarType === 'initial' ? '' : String(avatarValue || '');
+    }
+
     await setUser(user);
 
-    return res.json({ success: true, user: publicUser(user) });
+    return res.json({ success: true, user: { ...publicUser(user), code: user.code } });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: 'Ошибка сервера.' });
@@ -185,7 +218,7 @@ app.get('/api/search', async (req, res) => {
 
 app.get('/api/messages', async (req, res) => {
   try {
-    const { chatId, username, withUser } = req.query;
+    const { chatId, username, withUser, forUser } = req.query;
 
     let id = chatId;
     if (!id && username && withUser) {
@@ -193,8 +226,26 @@ app.get('/api/messages', async (req, res) => {
     }
     if (!id) return res.status(400).json({ success: false, message: 'Не указан чат.' });
 
-    const messages = await redis.lrange('texta:messages:' + id, 0, -1);
-    res.json({ success: true, chatId: id, messages: messages || [] });
+    let messages = await redis.lrange('texta:messages:' + id, 0, -1);
+    messages = messages || [];
+
+    const requester = cleanUsername(forUser || username);
+    if (requester) {
+      const [deletedIds, clearedAt] = await Promise.all([
+        redis.smembers('texta:deleted:' + requester + ':' + id),
+        redis.get('texta:cleared:' + requester + ':' + id)
+      ]);
+
+      if (deletedIds.length) {
+        const deletedSet = new Set(deletedIds);
+        messages = messages.filter(m => !deletedSet.has(m.id));
+      }
+      if (clearedAt) {
+        messages = messages.filter(m => m.time > clearedAt);
+      }
+    }
+
+    res.json({ success: true, chatId: id, messages });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: 'Ошибка сервера.' });
@@ -212,6 +263,19 @@ app.post('/api/messages', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Не указан получатель.' });
     }
 
+    if (!isFavorite) {
+      const [recipientBlockedMe, iBlockedRecipient] = await Promise.all([
+        isBlocked(withUser, username),
+        isBlocked(username, withUser)
+      ]);
+      if (recipientBlockedMe) {
+        return res.status(403).json({ success: false, message: 'Пользователь заблокировал вас.' });
+      }
+      if (iBlockedRecipient) {
+        return res.status(403).json({ success: false, message: 'Вы заблокировали этого пользователя. Разблокируйте, чтобы писать.' });
+      }
+    }
+
     const id = isFavorite ? `fav:${cleanUsername(username)}` : chatIdBetween(username, withUser);
 
     const message = {
@@ -223,13 +287,16 @@ app.post('/api/messages', async (req, res) => {
 
     await redis.rpush('texta:messages:' + id, message);
 
-    // Записываем чат в общий (серверный) список обоих участников —
-    // чтобы диалог появился у собеседника сам, без ручного поиска.
     if (!isFavorite) {
       const a = cleanUsername(username);
       const b = cleanUsername(withUser);
+      // Записываем чат в общий (серверный) список обоих участников —
+      // чтобы диалог появился у собеседника сам, без ручного поиска.
       await redis.sadd('texta:chats:' + a, b);
       await redis.sadd('texta:chats:' + b, a);
+      // Новая активность в чате возвращает его в список, даже если кто-то его скрывал ("удалил чат")
+      await redis.srem('texta:hidden_chats:' + a, b);
+      await redis.srem('texta:hidden_chats:' + b, a);
     }
 
     res.json({ success: true, chatId: id, message });
@@ -239,27 +306,133 @@ app.post('/api/messages', async (req, res) => {
   }
 });
 
-// ---------- API: список чатов пользователя (серверный, общий для всех устройств) ----------
+// ---------- API: удаление отдельных сообщений ----------
+// mode: 'me' — скрыть сообщение только у себя
+// mode: 'everyone' — удалить у всех, разрешено только автору и только в течение часа после отправки
+
+app.post('/api/messages/delete', async (req, res) => {
+  try {
+    const { username, chatId, messageId, mode } = req.body || {};
+
+    if (!username || !chatId || !messageId || !mode) {
+      return res.status(400).json({ success: false, message: 'Не хватает параметров.' });
+    }
+
+    const cleanU = cleanUsername(username);
+    const key = 'texta:messages:' + chatId;
+
+    if (mode === 'me') {
+      await redis.sadd('texta:deleted:' + cleanU + ':' + chatId, messageId);
+      return res.json({ success: true });
+    }
+
+    if (mode === 'everyone') {
+      const messages = await redis.lrange(key, 0, -1);
+      const target = messages.find(m => m.id === messageId);
+
+      if (!target) {
+        return res.status(404).json({ success: false, message: 'Сообщение не найдено.' });
+      }
+      if (cleanUsername(target.from) !== cleanU) {
+        return res.status(403).json({ success: false, message: 'Можно удалять у всех только свои сообщения.' });
+      }
+      if (Date.now() - target.time > DELETE_FOR_EVERYONE_WINDOW_MS) {
+        return res.status(403).json({ success: false, message: 'Прошёл час — удалить у всех уже нельзя.' });
+      }
+
+      const remaining = messages.filter(m => m.id !== messageId);
+      await redis.del(key);
+      if (remaining.length) await redis.rpush(key, ...remaining);
+
+      return res.json({ success: true });
+    }
+
+    return res.status(400).json({ success: false, message: 'Неизвестный режим удаления.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Ошибка сервера.' });
+  }
+});
+
+// ---------- API: удаление всей переписки целиком ----------
+// mode: 'me' — очистить историю только у себя (собеседник продолжает её видеть)
+// mode: 'everyone' — удалить переписку физически, у всех участников
+
+app.post('/api/conversation/delete', async (req, res) => {
+  try {
+    const { username, withUser, mode } = req.body || {};
+    if (!username || !withUser || !mode) {
+      return res.status(400).json({ success: false, message: 'Не хватает параметров.' });
+    }
+
+    const chatId = chatIdBetween(username, withUser);
+    const cleanU = cleanUsername(username);
+
+    if (mode === 'me') {
+      await redis.set('texta:cleared:' + cleanU + ':' + chatId, Date.now());
+      return res.json({ success: true });
+    }
+
+    if (mode === 'everyone') {
+      await redis.del('texta:messages:' + chatId);
+      return res.json({ success: true });
+    }
+
+    return res.status(400).json({ success: false, message: 'Неизвестный режим удаления.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Ошибка сервера.' });
+  }
+});
+
+// ---------- API: удалить чат из списка (не трогая сами сообщения) ----------
+
+app.post('/api/chats/delete', async (req, res) => {
+  try {
+    const { username, withUser } = req.body || {};
+    if (!username || !withUser) {
+      return res.status(400).json({ success: false, message: 'Не хватает параметров.' });
+    }
+    await redis.sadd('texta:hidden_chats:' + cleanUsername(username), cleanUsername(withUser));
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Ошибка сервера.' });
+  }
+});
+
+// ---------- API: список чатов пользователя ----------
 
 app.get('/api/chats', async (req, res) => {
   try {
     const username = cleanUsername(req.query.username);
     if (!username) return res.status(400).json({ success: false, message: 'Не указан username.' });
 
-    const partners = await redis.smembers('texta:chats:' + username);
-    if (!partners.length) return res.json({ success: true, chats: [] });
+    const [partners, hidden] = await Promise.all([
+      redis.smembers('texta:chats:' + username),
+      redis.smembers('texta:hidden_chats:' + username)
+    ]);
 
-    const users = await redis.mget(...partners.map(u => 'texta:user:' + u));
+    const hiddenSet = new Set(hidden);
+    const visiblePartners = partners.filter(p => !hiddenSet.has(p));
+    if (!visiblePartners.length) return res.json({ success: true, chats: [] });
+
+    const users = await redis.mget(...visiblePartners.map(u => 'texta:user:' + u));
 
     const chats = await Promise.all(
       users.filter(Boolean).map(async (u) => {
         const chatId = chatIdBetween(username, u.username);
-        const last = await redis.lrange('texta:messages:' + chatId, -1, -1);
+        const [last, clearedAt] = await Promise.all([
+          redis.lrange('texta:messages:' + chatId, -1, -1),
+          redis.get('texta:cleared:' + username + ':' + chatId)
+        ]);
+        const lastMsg = last && last[0] ? last[0] : null;
+        const hiddenByClear = lastMsg && clearedAt && lastMsg.time <= clearedAt;
+
         return {
-          username: u.username,
-          displayName: u.displayName,
-          lastMessage: last && last[0] ? last[0].text : '',
-          lastTime: last && last[0] ? last[0].time : 0
+          ...publicUser(u),
+          lastMessage: lastMsg && !hiddenByClear ? lastMsg.text : '',
+          lastTime: lastMsg && !hiddenByClear ? lastMsg.time : 0
         };
       })
     );
@@ -267,6 +440,45 @@ app.get('/api/chats', async (req, res) => {
     chats.sort((a, b) => b.lastTime - a.lastTime);
 
     res.json({ success: true, chats });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Ошибка сервера.' });
+  }
+});
+
+// ---------- API: блокировка пользователей ----------
+
+app.post('/api/block', async (req, res) => {
+  try {
+    const { username, target, block } = req.body || {};
+    if (!username || !target) {
+      return res.status(400).json({ success: false, message: 'Не хватает параметров.' });
+    }
+    const a = cleanUsername(username);
+    const b = cleanUsername(target);
+
+    if (block) {
+      await redis.sadd('texta:blocked:' + a, b);
+    } else {
+      await redis.srem('texta:blocked:' + a, b);
+    }
+
+    res.json({ success: true, blocked: !!block });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Ошибка сервера.' });
+  }
+});
+
+app.get('/api/block/status', async (req, res) => {
+  try {
+    const username = cleanUsername(req.query.username);
+    const target = cleanUsername(req.query.target);
+    if (!username || !target) {
+      return res.status(400).json({ success: false, message: 'Не хватает параметров.' });
+    }
+    const blocked = await isBlocked(username, target);
+    res.json({ success: true, blocked });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: 'Ошибка сервера.' });
