@@ -1,4 +1,4 @@
-/* ============================================================
+  /* ============================================================
    TEXTA — стили
    Material 3 / Telegram Dark, squircle-скругления, микро-анимации
    ============================================================ */
@@ -539,7 +539,7 @@ button {
   flex-shrink: 0;
 }
 
-.chat-header-info { min-width: 0; }
+.chat-header-info { min-width: 0; flex: 1; }
 
 .chat-header-name {
   font-weight: 700;
@@ -553,6 +553,32 @@ button {
   font-size: 12.5px;
   color: var(--text-dim);
 }
+
+/* ---------- Аватарки: фото / эмодзи / инициал ---------- */
+
+.chat-avatar,
+.chat-header-avatar,
+.settings-avatar {
+  overflow: hidden;
+}
+
+.chat-avatar img,
+.chat-header-avatar img,
+.settings-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-avatar.is-emoji,
+.chat-header-avatar.is-emoji,
+.settings-avatar.is-emoji {
+  font-size: 1.4em;
+}
+
+/* ---------- Опции чата (шапка "...") ---------- */
+
+.chat-opt-hidden { display: none !important; }
 
 .messages-area {
   flex: 1;
@@ -621,6 +647,71 @@ button {
   text-align: right;
 }
 
+.msg-bubble {
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.msg-bubble.pressing {
+  filter: brightness(0.85);
+}
+
+.msg-action-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: none;
+}
+
+.msg-action-sheet.active {
+  display: block;
+}
+
+.msg-action-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+}
+
+.msg-action-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px 12px calc(12px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: sheet-up .2s cubic-bezier(.22,1,.36,1);
+}
+
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+.msg-action-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 14px;
+  border: none;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.msg-action-btn.danger {
+  color: #ef4444;
+}
+
+.msg-action-btn.cancel {
+  margin-top: 4px;
+  font-weight: 600;
+}
+
 .input-bar {
   flex-shrink: 0;
   display: flex;
@@ -683,8 +774,60 @@ button {
   justify-content: center;
   font-size: 34px;
   font-weight: 800;
-  margin: 0 auto 10px;
+  margin: 0 auto 0;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
 }
+
+.settings-avatar:active { transform: scale(.95); }
+
+.avatar-hint {
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.avatar-panel {
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  padding-top: 16px;
+}
+
+.avatar-panel-title {
+  text-align: center;
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 6px;
+  color: var(--text-dim);
+}
+
+.avatar-panel .msg-action-btn {
+  background: var(--surface-2);
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.emoji-option {
+  aspect-ratio: 1;
+  border-radius: 14px;
+  border: none;
+  background: var(--surface-2);
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.emoji-option:active { transform: scale(.9); }
 
 .settings-body .btn-primary,
 .settings-body .btn-secondary { margin-top: 6px; }
