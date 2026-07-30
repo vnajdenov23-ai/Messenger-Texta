@@ -9,7 +9,6 @@
 
   const API = '/api';
   const SESSION_KEY = 'texta_session';
-  const CHATS_KEY_PREFIX = 'texta_known_chats_'; // список собеседников, с которыми открывали диалог (локально, на устройстве)
 
   // ---------- Состояние ----------
 
@@ -17,6 +16,7 @@
   let currentChatPartner = null;      // объект собеседника {username, displayName} либо null для избранного
   let isFavoriteChat = false;
   let messagesPollTimer = null;
+  let chatListPollTimer = null;       // опрос списка чатов на главном экране (чтобы входящие сообщения появлялись сами)
 
   // ---------- Утилиты DOM ----------
 
@@ -58,26 +58,18 @@
     localStorage.removeItem(SESSION_KEY);
   }
 
-  // ---------- Локальный список открытых диалогов (на этом устройстве) ----------
+  // ---------- Список диалогов ----------
+  // Раньше список чатов хранился только в localStorage этого устройства и пополнялся
+  // только когда пользователь сам открывал диалог через поиск — из-за этого входящие
+  // сообщения не появлялись на главном экране, пока не найдёшь собеседника вручную.
+  // Теперь список общий, серверный (см. /api/chats) — обновляется само по себе.
 
-  function knownChatsKey() {
-    return CHATS_KEY_PREFIX + (session ? session.username.toLowerCase() : 'anon');
-  }
-
-  function getKnownChats() {
+  async function fetchChatsFromServer() {
     try {
-      const raw = localStorage.getItem(knownChatsKey());
-      return raw ? JSON.parse(raw) : [];
+      const data = await apiGet(`/chats?username=${encodeURIComponent(session.username)}`);
+      return data.chats || [];
     } catch (e) {
       return [];
-    }
-  }
-
-  function addKnownChat(user) {
-    const chats = getKnownChats();
-    if (!chats.find(c => c.username.toLowerCase() === user.username.toLowerCase())) {
-      chats.unshift(user);
-      localStorage.setItem(knownChatsKey(), JSON.stringify(chats));
     }
   }
 
@@ -204,6 +196,7 @@
     showScreen('screen-chats');
     renderFavPreview();
     renderChatList();
+    startChatListPolling();
     initAppHandlers();
   }
 
@@ -302,10 +295,17 @@
   // СПИСОК ЧАТОВ
   // ============================================================
 
-  function renderChatList() {
-    const chats = getKnownChats();
+  let lastChatsSignature = '';
+
+  async function renderChatList() {
+    const chats = await fetchChatsFromServer();
     const empty = $('chat-list-empty');
     const container = $('dynamic-chats');
+
+    // Не перерисовываем DOM, если список не изменился — избегаем "мигания" при опросе
+    const signature = JSON.stringify(chats.map(c => [c.username, c.lastMessage, c.lastTime]));
+    if (signature === lastChatsSignature) return;
+    lastChatsSignature = signature;
 
     if (!chats.length) {
       empty.classList.remove('hidden');
@@ -325,14 +325,24 @@
   }
 
   function userRowHtmlChat(u) {
+    const preview = u.lastMessage ? escapeHtml(u.lastMessage) : '@' + escapeHtml(u.username);
     return `
       <button class="chat-row" data-username="${escapeAttr(u.username)}" data-displayname="${escapeAttr(u.displayName)}">
         <div class="chat-avatar">${escapeHtml(initials(u.displayName))}</div>
         <div class="chat-row-body">
           <div class="chat-row-top"><span class="chat-row-name">${escapeHtml(u.displayName)}</span></div>
-          <div class="chat-row-preview">@${escapeHtml(u.username)}</div>
+          <div class="chat-row-preview">${preview}</div>
         </div>
       </button>`;
+  }
+
+  function startChatListPolling() {
+    clearInterval(chatListPollTimer);
+    chatListPollTimer = setInterval(renderChatList, 3000);
+  }
+
+  function stopChatListPolling() {
+    clearInterval(chatListPollTimer);
   }
 
   async function renderFavPreview() {
@@ -352,8 +362,7 @@
   function openChat(user, isFavorite) {
     isFavoriteChat = isFavorite;
     currentChatPartner = isFavorite ? null : user;
-
-    if (!isFavorite) addKnownChat(user);
+    stopChatListPolling();
 
     const name = isFavorite ? 'Избранное' : user.displayName;
     const sub = isFavorite ? 'Личные заметки' : '@' + user.username;
@@ -378,6 +387,7 @@
     showScreen('screen-chats');
     renderChatList();
     renderFavPreview();
+    startChatListPolling();
   }
 
   function currentChatQuery() {
@@ -489,6 +499,7 @@
 
   function onLogout() {
     clearInterval(messagesPollTimer);
+    stopChatListPolling();
     clearSession();
     handlersInitialized = false;
     $('login-username').value = '';
@@ -512,3 +523,4 @@
   }
 
 })();
+ 
