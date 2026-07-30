@@ -223,7 +223,50 @@ app.post('/api/messages', async (req, res) => {
 
     await redis.rpush('texta:messages:' + id, message);
 
+    // Записываем чат в общий (серверный) список обоих участников —
+    // чтобы диалог появился у собеседника сам, без ручного поиска.
+    if (!isFavorite) {
+      const a = cleanUsername(username);
+      const b = cleanUsername(withUser);
+      await redis.sadd('texta:chats:' + a, b);
+      await redis.sadd('texta:chats:' + b, a);
+    }
+
     res.json({ success: true, chatId: id, message });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Ошибка сервера.' });
+  }
+});
+
+// ---------- API: список чатов пользователя (серверный, общий для всех устройств) ----------
+
+app.get('/api/chats', async (req, res) => {
+  try {
+    const username = cleanUsername(req.query.username);
+    if (!username) return res.status(400).json({ success: false, message: 'Не указан username.' });
+
+    const partners = await redis.smembers('texta:chats:' + username);
+    if (!partners.length) return res.json({ success: true, chats: [] });
+
+    const users = await redis.mget(...partners.map(u => 'texta:user:' + u));
+
+    const chats = await Promise.all(
+      users.filter(Boolean).map(async (u) => {
+        const chatId = chatIdBetween(username, u.username);
+        const last = await redis.lrange('texta:messages:' + chatId, -1, -1);
+        return {
+          username: u.username,
+          displayName: u.displayName,
+          lastMessage: last && last[0] ? last[0].text : '',
+          lastTime: last && last[0] ? last[0].time : 0
+        };
+      })
+    );
+
+    chats.sort((a, b) => b.lastTime - a.lastTime);
+
+    res.json({ success: true, chats });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: 'Ошибка сервера.' });
