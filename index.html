@@ -128,9 +128,32 @@
         <div class="chat-header-name" id="chat-header-name">Имя</div>
         <div class="chat-header-sub" id="chat-header-sub">@username</div>
       </div>
+      <button class="icon-btn" id="btn-chat-options" aria-label="Опции чата">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+      </button>
     </header>
 
+    <div class="msg-action-sheet" id="chat-options-sheet">
+      <div class="msg-action-backdrop" id="chat-options-backdrop"></div>
+      <div class="msg-action-panel">
+        <button class="msg-action-btn" id="chat-opt-delete-chat">Удалить чат</button>
+        <button class="msg-action-btn" id="chat-opt-clear-me">Очистить переписку у себя</button>
+        <button class="msg-action-btn danger" id="chat-opt-clear-everyone">Удалить переписку у всех</button>
+        <button class="msg-action-btn danger" id="chat-opt-block">Заблокировать</button>
+        <button class="msg-action-btn cancel" id="chat-opt-cancel">Отмена</button>
+      </div>
+    </div>
+
     <div class="messages-area" id="messages-area"></div>
+
+    <div class="msg-action-sheet" id="msg-action-sheet">
+      <div class="msg-action-backdrop" id="msg-action-backdrop"></div>
+      <div class="msg-action-panel">
+        <button class="msg-action-btn" id="action-delete-me">Удалить у себя</button>
+        <button class="msg-action-btn danger" id="action-delete-everyone">Удалить у всех</button>
+        <button class="msg-action-btn cancel" id="action-cancel">Отмена</button>
+      </div>
+    </div>
 
     <form class="input-bar" id="form-send">
       <input type="text" id="message-input" placeholder="Сообщение..." autocomplete="off">
@@ -152,7 +175,20 @@
     </header>
 
     <div class="settings-body">
-      <div class="settings-avatar" id="settings-avatar">T</div>
+      <button class="settings-avatar" id="settings-avatar" type="button" aria-label="Изменить аватарку">T</button>
+      <div class="avatar-hint">Нажмите на аватарку, чтобы изменить</div>
+
+      <input type="file" id="avatar-file-input" accept="image/*" class="hidden">
+
+      <div class="msg-action-sheet" id="avatar-sheet">
+        <div class="msg-action-backdrop" id="avatar-sheet-backdrop"></div>
+        <div class="msg-action-panel avatar-panel">
+          <div class="avatar-panel-title">Аватарка</div>
+          <button class="msg-action-btn" id="btn-upload-photo">Загрузить фото</button>
+          <div class="emoji-grid" id="emoji-grid"></div>
+          <button class="msg-action-btn cancel" id="avatar-sheet-cancel">Отмена</button>
+        </div>
+      </div>
 
       <label class="field">
         <span class="field-label">Отображаемое имя</span>
