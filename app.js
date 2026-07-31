@@ -247,6 +247,16 @@
     $('btn-back-to-list').addEventListener('click', closeChat);
     $('form-send').addEventListener('submit', onSendMessage);
 
+    // ---- Плеер голосовых и просмотр фото (делегирование, переживает перерисовку) ----
+    $('messages-area').addEventListener('click', (e) => {
+      if (Date.now() < suppressClickUntil) return;
+      const playBtn = e.target.closest('.voice-play-btn');
+      if (playBtn) { toggleVoicePlayback(playBtn); return; }
+      const photo = e.target.closest('.msg-photo');
+      if (photo) openLightbox(photo.src);
+    });
+    $('photo-lightbox').addEventListener('click', closeLightbox);
+
     // ---- Фото и голосовые ----
     $('btn-attach-photo').addEventListener('click', () => $('photo-input').click());
     $('photo-input').addEventListener('change', onPhotoSelected);
@@ -609,8 +619,18 @@
       return `<img class="msg-photo" src="${escapeAttr(m.media)}" alt="фото">`;
     }
     if (m.type === 'voice' && m.media) {
-      const dur = m.voiceDuration ? formatDuration(m.voiceDuration) : '';
-      return `<div class="msg-voice"><audio controls src="${escapeAttr(m.media)}"></audio><span>${dur}</span></div>`;
+      const bars = (m.waveform && m.waveform.length ? m.waveform : new Array(28).fill(30));
+      const barsHtml = bars.map(v => `<span style="height:${Math.max(3, Math.round(v * 0.24))}px"></span>`).join('');
+      const dur = m.voiceDuration ? formatDuration(m.voiceDuration) : '0:00';
+      return `
+        <div class="msg-voice" data-src="${escapeAttr(m.media)}">
+          <button type="button" class="voice-play-btn" aria-label="Играть">
+            <svg class="icon-play" viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+            <svg class="icon-pause" viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>
+          </button>
+          <div class="voice-wave">${barsHtml}</div>
+          <span class="voice-duration">${dur}</span>
+        </div>`;
     }
     return escapeHtml(m.text);
   }
@@ -624,6 +644,66 @@
 
   let pressTimer = null;
   let selectedMessage = null; // { id, time, own }
+  let suppressClickUntil = 0;
+  let activeVoiceAudio = null;
+  let activeVoiceBtn = null;
+  let activeVoiceBars = null;
+
+  function toggleVoicePlayback(btn) {
+    const container = btn.closest('.msg-voice');
+    const src = container.dataset.src;
+    const bars = container.querySelectorAll('.voice-wave span');
+
+    if (activeVoiceAudio && activeVoiceBtn === btn) {
+      if (activeVoiceAudio.paused) {
+        activeVoiceAudio.play();
+        btn.classList.add('playing');
+      } else {
+        activeVoiceAudio.pause();
+        btn.classList.remove('playing');
+      }
+      return;
+    }
+
+    if (activeVoiceAudio) {
+      activeVoiceAudio.pause();
+      if (activeVoiceBtn) activeVoiceBtn.classList.remove('playing');
+      if (activeVoiceBars) activeVoiceBars.forEach(b => b.classList.remove('played'));
+    }
+
+    const audio = new Audio(src);
+    activeVoiceAudio = audio;
+    activeVoiceBtn = btn;
+    activeVoiceBars = bars;
+    btn.classList.add('playing');
+
+    audio.addEventListener('timeupdate', () => {
+      if (!audio.duration) return;
+      const activeCount = Math.round((audio.currentTime / audio.duration) * bars.length);
+      bars.forEach((b, i) => b.classList.toggle('played', i < activeCount));
+    });
+    audio.addEventListener('ended', () => {
+      btn.classList.remove('playing');
+      bars.forEach(b => b.classList.remove('played'));
+      activeVoiceAudio = null;
+      activeVoiceBtn = null;
+      activeVoiceBars = null;
+    });
+    audio.play().catch(() => {
+      btn.classList.remove('playing');
+      alert('Не удалось воспроизвести голосовое сообщение.');
+    });
+  }
+
+  function openLightbox(src) {
+    $('photo-lightbox-img').src = src;
+    $('photo-lightbox').classList.add('active');
+  }
+
+  function closeLightbox() {
+    $('photo-lightbox').classList.remove('active');
+    $('photo-lightbox-img').src = '';
+  }
 
   function attachBubbleLongPress(area) {
     area.querySelectorAll('.msg-bubble').forEach(bubble => {
@@ -653,6 +733,7 @@
       time: Number(bubble.dataset.time),
       own: bubble.dataset.own === '1'
     };
+    suppressClickUntil = Date.now() + 400;
 
     const withinHour = Date.now() - selectedMessage.time <= 3600000;
     $('action-delete-everyone').classList.toggle('hidden', !(selectedMessage.own && withinHour));
@@ -711,10 +792,11 @@
     }
   }
 
-  async function sendMediaMessage(type, media, voiceDuration) {
+  async function sendMediaMessage(type, media, voiceDuration, waveform) {
     try {
       const body = { username: session.username, type, media };
       if (voiceDuration) body.voiceDuration = voiceDuration;
+      if (waveform) body.waveform = waveform;
       if (isFavoriteChat) body.isFavorite = true;
       else body.withUser = currentChatPartner.username;
 
@@ -762,6 +844,10 @@
   let recordedChunks = [];
   let recordStartTime = 0;
   let recordTimerInterval = null;
+  let waveformSamples = [];
+  let waveformAudioCtx = null;
+  let waveformAnalyser = null;
+  let waveformSampleInterval = null;
 
   async function startVoiceRecording() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -776,6 +862,30 @@
       mediaRecorder.start();
       recordStartTime = Date.now();
 
+      // Замеряем громкость голоса каждые ~100мс, чтобы построить волну как в Телеграме
+      waveformSamples = [];
+      try {
+        waveformAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = waveformAudioCtx.createMediaStreamSource(stream);
+        waveformAnalyser = waveformAudioCtx.createAnalyser();
+        waveformAnalyser.fftSize = 256;
+        source.connect(waveformAnalyser);
+        const data = new Uint8Array(waveformAnalyser.frequencyBinCount);
+
+        waveformSampleInterval = setInterval(() => {
+          waveformAnalyser.getByteTimeDomainData(data);
+          let sumSquares = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = (data[i] - 128) / 128;
+            sumSquares += v * v;
+          }
+          const rms = Math.sqrt(sumSquares / data.length);
+          waveformSamples.push(Math.min(1, rms * 4.5));
+        }, 100);
+      } catch (waveErr) {
+        // Волна — приятное дополнение, не критично, если Web Audio API недоступен
+      }
+
       $('btn-record-voice').classList.add('recording');
       $('voice-recorder').classList.remove('hidden');
       $('voice-timer').textContent = '0:00';
@@ -788,13 +898,31 @@
     }
   }
 
+  function resampleWaveform(samples, targetCount) {
+    if (!samples.length) return new Array(targetCount).fill(25);
+    const result = [];
+    const bucket = samples.length / targetCount;
+    for (let i = 0; i < targetCount; i++) {
+      const start = Math.floor(i * bucket);
+      const end = Math.max(start + 1, Math.floor((i + 1) * bucket));
+      let sum = 0, count = 0;
+      for (let j = start; j < end && j < samples.length; j++) { sum += samples[j]; count++; }
+      const avg = count ? sum / count : 0;
+      result.push(Math.max(6, Math.round(avg * 100)));
+    }
+    return result;
+  }
+
   function stopVoiceRecording(send) {
     if (!mediaRecorder) return;
     clearInterval(recordTimerInterval);
+    clearInterval(waveformSampleInterval);
+    if (waveformAudioCtx) { waveformAudioCtx.close(); waveformAudioCtx = null; }
     $('btn-record-voice').classList.remove('recording');
     $('voice-recorder').classList.add('hidden');
 
     const duration = (Date.now() - recordStartTime) / 1000;
+    const waveform = resampleWaveform(waveformSamples, 28);
 
     mediaRecorder.onstop = () => {
       mediaRecorder.stream.getTracks().forEach(t => t.stop());
@@ -802,7 +930,7 @@
 
       const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
       const reader = new FileReader();
-      reader.onload = () => sendMediaMessage('voice', reader.result, duration);
+      reader.onload = () => sendMediaMessage('voice', reader.result, duration, waveform);
       reader.readAsDataURL(blob);
       mediaRecorder = null;
     };
