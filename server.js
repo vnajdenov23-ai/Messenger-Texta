@@ -273,7 +273,7 @@ app.get('/api/messages', async (req, res) => {
 
 app.post('/api/messages', async (req, res) => {
   try {
-    const { username, withUser, text, isFavorite, type, media, voiceDuration } = req.body || {};
+    const { username, withUser, text, isFavorite, type, media, voiceDuration, waveform } = req.body || {};
     const msgType = type === 'photo' || type === 'voice' ? type : 'text';
 
     if (msgType === 'text') {
@@ -315,6 +315,9 @@ app.post('/api/messages', async (req, res) => {
       text: msgType === 'text' ? String(text).trim() : '',
       media: msgType === 'text' ? '' : String(media),
       voiceDuration: msgType === 'voice' ? Number(voiceDuration) || 0 : 0,
+      waveform: msgType === 'voice' && Array.isArray(waveform)
+        ? waveform.slice(0, 64).map(n => Math.max(0, Math.min(100, Math.round(Number(n) || 0))))
+        : [],
       time: Date.now()
     };
 
