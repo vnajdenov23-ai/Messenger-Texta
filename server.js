@@ -19,8 +19,8 @@ const { Redis } = require('@upstash/redis');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Аватарки (base64-фото) могут быть увесистыми — увеличиваем лимит тела запроса
-app.use(express.json({ limit: '2mb' }));
+// Фото и голосовые сообщения (base64) могут быть увесистыми — увеличиваем лимит тела запроса
+app.use(express.json({ limit: '8mb' }));
 app.use(express.static(path.join(__dirname))); // отдаём index.html, style.css, app.js
 
 // ---------- Подключение к Upstash Redis ----------
@@ -38,7 +38,9 @@ const redis = new Redis({
 
 const USERS_INDEX_KEY = 'texta:users:index'; // множество всех username (для поиска)
 const DELETE_FOR_EVERYONE_WINDOW_MS = 60 * 60 * 1000; // 1 час
-const MAX_AVATAR_LENGTH = 400000; // ограничение на размер base64-фото (~300 КБ файла)
+const MAX_AVATAR_LENGTH = 400000; // ограничение на размер base64-фото аватарки (~300 КБ файла)
+const MAX_PHOTO_LENGTH = 3000000; // ограничение на размер base64-фото в сообщении (~2.2 МБ файла)
+const MAX_VOICE_LENGTH = 2500000; // ограничение на размер base64-голосового сообщения
 
 function generateCode() {
   const num = Math.floor(100000 + Math.random() * 900000); // 6 цифр
@@ -186,6 +188,23 @@ app.post('/api/profile/update', async (req, res) => {
   }
 });
 
+// ---------- API: публичный профиль пользователя (без секретного кода) ----------
+
+app.get('/api/profile', async (req, res) => {
+  try {
+    const username = cleanUsername(req.query.username);
+    if (!username) return res.status(400).json({ success: false, message: 'Не указан username.' });
+
+    const user = await getUser(username);
+    if (!user) return res.status(404).json({ success: false, message: 'Пользователь не найден.' });
+
+    res.json({ success: true, user: { ...publicUser(user), createdAt: user.createdAt || 0 } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Ошибка сервера.' });
+  }
+});
+
 // ---------- API: поиск пользователей ----------
 
 app.get('/api/search', async (req, res) => {
@@ -254,10 +273,21 @@ app.get('/api/messages', async (req, res) => {
 
 app.post('/api/messages', async (req, res) => {
   try {
-    const { username, withUser, text, isFavorite } = req.body || {};
+    const { username, withUser, text, isFavorite, type, media, voiceDuration } = req.body || {};
+    const msgType = type === 'photo' || type === 'voice' ? type : 'text';
 
-    if (!username || !text || !String(text).trim()) {
-      return res.status(400).json({ success: false, message: 'Пустое сообщение.' });
+    if (msgType === 'text') {
+      if (!username || !text || !String(text).trim()) {
+        return res.status(400).json({ success: false, message: 'Пустое сообщение.' });
+      }
+    } else {
+      if (!username || !media) {
+        return res.status(400).json({ success: false, message: 'Не хватает данных сообщения.' });
+      }
+      const limit = msgType === 'photo' ? MAX_PHOTO_LENGTH : MAX_VOICE_LENGTH;
+      if (String(media).length > limit) {
+        return res.status(400).json({ success: false, message: 'Файл слишком большой.' });
+      }
     }
     if (!isFavorite && !withUser) {
       return res.status(400).json({ success: false, message: 'Не указан получатель.' });
@@ -281,7 +311,10 @@ app.post('/api/messages', async (req, res) => {
     const message = {
       id: Date.now() + '-' + Math.floor(Math.random() * 1000),
       from: username,
-      text: String(text).trim(),
+      type: msgType,
+      text: msgType === 'text' ? String(text).trim() : '',
+      media: msgType === 'text' ? '' : String(media),
+      voiceDuration: msgType === 'voice' ? Number(voiceDuration) || 0 : 0,
       time: Date.now()
     };
 
@@ -422,17 +455,25 @@ app.get('/api/chats', async (req, res) => {
     const chats = await Promise.all(
       users.filter(Boolean).map(async (u) => {
         const chatId = chatIdBetween(username, u.username);
-        const [last, clearedAt] = await Promise.all([
-          redis.lrange('texta:messages:' + chatId, -1, -1),
-          redis.get('texta:cleared:' + username + ':' + chatId)
+        const [tail, clearedAt, deletedIds] = await Promise.all([
+          redis.lrange('texta:messages:' + chatId, -30, -1),
+          redis.get('texta:cleared:' + username + ':' + chatId),
+          redis.smembers('texta:deleted:' + username + ':' + chatId)
         ]);
-        const lastMsg = last && last[0] ? last[0] : null;
-        const hiddenByClear = lastMsg && clearedAt && lastMsg.time <= clearedAt;
+
+        const deletedSet = new Set(deletedIds);
+        const visible = (tail || []).filter(m =>
+          !deletedSet.has(m.id) && (!clearedAt || m.time > clearedAt)
+        );
+        const lastMsg = visible.length ? visible[visible.length - 1] : null;
+        const previewText = lastMsg
+          ? (lastMsg.type === 'photo' ? '📷 Фото' : lastMsg.type === 'voice' ? '🎤 Голосовое сообщение' : lastMsg.text)
+          : '';
 
         return {
           ...publicUser(u),
-          lastMessage: lastMsg && !hiddenByClear ? lastMsg.text : '',
-          lastTime: lastMsg && !hiddenByClear ? lastMsg.time : 0
+          lastMessage: previewText,
+          lastTime: lastMsg ? lastMsg.time : 0
         };
       })
     );
