@@ -1,4 +1,4 @@
-  /* ============================================================
+/* ============================================================
    TEXTA — стили
    Material 3 / Telegram Dark, squircle-скругления, микро-анимации
    ============================================================ */
@@ -541,6 +541,19 @@ button {
 
 .chat-header-info { min-width: 0; flex: 1; }
 
+.chat-header-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
 .chat-header-name {
   font-weight: 700;
   font-size: 15.5px;
@@ -554,7 +567,7 @@ button {
   color: var(--text-dim);
 }
 
-/* ---------- Аватарки: фото / эмодзи / инициал ---------- */
+/* ---------- Аватарки: фото / эмодзи / инициал (общие для всех мест) ---------- */
 
 .chat-avatar,
 .chat-header-avatar,
@@ -574,6 +587,120 @@ button {
 .chat-header-avatar.is-emoji,
 .settings-avatar.is-emoji {
   font-size: 1.4em;
+}
+
+/* ---------- Профиль пользователя (модалка из шапки чата) ---------- */
+
+.profile-panel {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 20px calc(20px + var(--safe-bottom));
+  gap: 4px;
+}
+
+.profile-avatar {
+  width: 88px;
+  height: 88px;
+  min-width: 88px;
+  min-height: 88px;
+  flex-shrink: 0;
+  border-radius: 28px;
+  background: var(--gradient);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.profile-avatar.is-emoji { font-size: 1.4em; }
+
+.profile-name { font-size: 19px; font-weight: 800; }
+.profile-username { font-size: 14px; color: var(--text-dim); margin-bottom: 4px; }
+.profile-joined { font-size: 12.5px; color: var(--text-faint); margin-bottom: 18px; }
+
+/* ---------- Вложения в панели ввода ---------- */
+
+.attach-btn, .mic-btn {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+
+.mic-btn.recording { color: #ef4444; }
+
+/* ---------- Индикатор записи голосового ---------- */
+
+.voice-recorder {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + var(--safe-bottom));
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 55;
+}
+
+.voice-recorder-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: pulse-dot 1s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .3; }
+}
+
+.voice-hint { color: var(--text-faint); font-size: 12.5px; margin-right: auto; }
+
+.voice-cancel, .voice-stop {
+  border: none;
+  border-radius: 10px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.voice-cancel { background: var(--surface-2); color: var(--text-dim); }
+.voice-stop { background: var(--gradient); color: #fff; }
+
+/* ---------- Медиа-сообщения ---------- */
+
+.msg-photo {
+  max-width: 220px;
+  max-height: 280px;
+  border-radius: 12px;
+  display: block;
+}
+
+.msg-voice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 190px;
+}
+
+.msg-voice audio {
+  width: 170px;
+  height: 34px;
 }
 
 /* ---------- Опции чата (шапка "...") ---------- */
@@ -767,6 +894,9 @@ button {
 .settings-avatar {
   width: 84px;
   height: 84px;
+  min-width: 84px;
+  min-height: 84px;
+  flex-shrink: 0;
   border-radius: 26px;
   background: var(--gradient);
   display: flex;
@@ -774,11 +904,14 @@ button {
   justify-content: center;
   font-size: 34px;
   font-weight: 800;
+  line-height: 1;
   margin: 0 auto 0;
   border: none;
   color: #fff;
   cursor: pointer;
   padding: 0;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .settings-avatar:active { transform: scale(.95); }
