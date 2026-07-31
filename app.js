@@ -247,6 +247,21 @@
     $('btn-back-to-list').addEventListener('click', closeChat);
     $('form-send').addEventListener('submit', onSendMessage);
 
+    // ---- Фото и голосовые ----
+    $('btn-attach-photo').addEventListener('click', () => $('photo-input').click());
+    $('photo-input').addEventListener('change', onPhotoSelected);
+    $('btn-record-voice').addEventListener('click', () => {
+      if (mediaRecorder) stopVoiceRecording(true);
+      else startVoiceRecording();
+    });
+    $('btn-voice-stop').addEventListener('click', () => stopVoiceRecording(true));
+    $('btn-voice-cancel').addEventListener('click', () => stopVoiceRecording(false));
+
+    // ---- Профиль собеседника ----
+    $('btn-open-profile').addEventListener('click', openProfile);
+    $('profile-sheet-backdrop').addEventListener('click', closeProfile);
+    $('profile-sheet-close').addEventListener('click', closeProfile);
+
     // ---- Удаление сообщений ----
     $('action-delete-me').addEventListener('click', () => deleteSelectedMessage('me'));
     $('action-delete-everyone').addEventListener('click', () => deleteSelectedMessage('everyone'));
@@ -454,6 +469,37 @@
     }
   }
 
+  // ---------- Профиль собеседника ----------
+
+  async function openProfile() {
+    if (isFavoriteChat || !currentChatPartner) return;
+    $('profile-sheet').classList.add('active');
+
+    try {
+      const data = await apiGet(`/profile?username=${encodeURIComponent(currentChatPartner.username)}`);
+      const u = data.user;
+      const av = avatarContent(u);
+      $('profile-avatar').innerHTML = av.html;
+      $('profile-avatar').className = 'profile-avatar' + (av.cls ? ' ' + av.cls : '');
+      $('profile-name').textContent = u.displayName;
+      $('profile-username').textContent = '@' + u.username;
+      $('profile-joined').textContent = u.createdAt ? 'На Texta с ' + formatJoinDate(u.createdAt) : '';
+    } catch (err) {
+      $('profile-name').textContent = 'Не удалось загрузить профиль';
+      $('profile-username').textContent = '';
+      $('profile-joined').textContent = '';
+    }
+  }
+
+  function closeProfile() {
+    $('profile-sheet').classList.remove('active');
+  }
+
+  function formatJoinDate(ts) {
+    const d = new Date(ts);
+    return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
   function closeChat() {
     clearInterval(messagesPollTimer);
     showScreen('screen-chats');
@@ -544,9 +590,10 @@
 
     area.innerHTML = messages.map(m => {
       const own = m.from.toLowerCase() === session.username.toLowerCase();
+      const inner = messageInnerHtml(m);
       return `
         <div class="msg-row ${own ? 'own' : 'other'}">
-          <div class="msg-bubble" data-id="${escapeAttr(m.id)}" data-time="${m.time}" data-own="${own ? '1' : '0'}">${escapeHtml(m.text)}<span class="msg-time">${formatTime(m.time)}</span></div>
+          <div class="msg-bubble" data-id="${escapeAttr(m.id)}" data-time="${m.time}" data-own="${own ? '1' : '0'}">${inner}<span class="msg-time">${formatTime(m.time)}</span></div>
         </div>`;
     }).join('');
 
@@ -555,6 +602,22 @@
     if (isNearBottom || messages.length <= 1) {
       area.scrollTop = area.scrollHeight;
     }
+  }
+
+  function messageInnerHtml(m) {
+    if (m.type === 'photo' && m.media) {
+      return `<img class="msg-photo" src="${escapeAttr(m.media)}" alt="фото">`;
+    }
+    if (m.type === 'voice' && m.media) {
+      const dur = m.voiceDuration ? formatDuration(m.voiceDuration) : '';
+      return `<div class="msg-voice"><audio controls src="${escapeAttr(m.media)}"></audio><span>${dur}</span></div>`;
+    }
+    return escapeHtml(m.text);
+  }
+
+  function formatDuration(sec) {
+    const s = Math.round(sec);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 
   // ---------- Удаление сообщений (долгое нажатие → меню) ----------
@@ -646,6 +709,104 @@
       input.value = text; // вернуть текст при ошибке
       alert('Не удалось отправить: ' + err.message);
     }
+  }
+
+  async function sendMediaMessage(type, media, voiceDuration) {
+    try {
+      const body = { username: session.username, type, media };
+      if (voiceDuration) body.voiceDuration = voiceDuration;
+      if (isFavoriteChat) body.isFavorite = true;
+      else body.withUser = currentChatPartner.username;
+
+      await apiPost('/messages', body);
+      lastRenderedCount = -1;
+      await loadMessages();
+      $('messages-area').scrollTop = $('messages-area').scrollHeight;
+    } catch (err) {
+      alert('Не удалось отправить: ' + err.message);
+    }
+  }
+
+  // ---------- Отправка фото ----------
+
+  function onPhotoSelected(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        // Сжимаем фото перед отправкой, чтобы не раздувать базу
+        const maxSide = 1024;
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+        sendMediaMessage('photo', dataUrl);
+      };
+      img.onerror = () => alert('Не удалось прочитать изображение.');
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ---------- Запись и отправка голосового ----------
+
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let recordStartTime = 0;
+  let recordTimerInterval = null;
+
+  async function startVoiceRecording() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('Запись голоса не поддерживается этим браузером.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordedChunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+      mediaRecorder.start();
+      recordStartTime = Date.now();
+
+      $('btn-record-voice').classList.add('recording');
+      $('voice-recorder').classList.remove('hidden');
+      $('voice-timer').textContent = '0:00';
+      recordTimerInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - recordStartTime) / 1000);
+        $('voice-timer').textContent = formatDuration(elapsed);
+      }, 500);
+    } catch (err) {
+      alert('Не удалось получить доступ к микрофону: ' + err.message);
+    }
+  }
+
+  function stopVoiceRecording(send) {
+    if (!mediaRecorder) return;
+    clearInterval(recordTimerInterval);
+    $('btn-record-voice').classList.remove('recording');
+    $('voice-recorder').classList.add('hidden');
+
+    const duration = (Date.now() - recordStartTime) / 1000;
+
+    mediaRecorder.onstop = () => {
+      mediaRecorder.stream.getTracks().forEach(t => t.stop());
+      if (!send || duration < 0.6) { mediaRecorder = null; return; }
+
+      const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      const reader = new FileReader();
+      reader.onload = () => sendMediaMessage('voice', reader.result, duration);
+      reader.readAsDataURL(blob);
+      mediaRecorder = null;
+    };
+    mediaRecorder.stop();
   }
 
   // ============================================================
