@@ -28,6 +28,19 @@
 
 * { box-sizing: border-box; }
 
+/* Отключаем выделение/копирование зажатием по всему интерфейсу — копирование теперь только через явные кнопки */
+body, button, .chat-row, .msg-bubble, .chat-header, .topbar, .settings-body, .msg-action-panel {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
 html, body {
   margin: 0;
   padding: 0;
@@ -220,6 +233,115 @@ button {
   color: var(--success);
   font-weight: 600;
   padding-left: 4px;
+}
+
+/* ---------- Поле + кнопка "Копировать" ---------- */
+
+.field-with-copy {
+  display: flex;
+  gap: 8px;
+}
+
+.field-with-copy input { flex: 1; min-width: 0; }
+
+.copy-btn {
+  flex-shrink: 0;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.copy-btn.copied { color: var(--success); border-color: var(--success); }
+
+/* ---------- Приватность "в сети" ---------- */
+
+.privacy-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.privacy-opt {
+  text-align: left;
+  padding: 13px 14px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.privacy-opt.active {
+  border-color: var(--blue);
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+/* ---------- Удаление аккаунта ---------- */
+
+.delete-account-warning {
+  padding: 0 20px 8px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* ---------- Панель заблокированного/удалённого чата (вместо ввода) ---------- */
+
+.chat-blocked-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px calc(14px + var(--safe-bottom));
+  background: var(--surface);
+}
+
+.chat-blocked-icon {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-blocked-icon svg,
+.chat-header-avatar svg,
+.profile-avatar svg,
+.chat-avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.chat-blocked-text {
+  flex: 1;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.chat-blocked-unblock {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 12px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  background: var(--gradient);
+  color: #fff;
+  cursor: pointer;
+}
+
+.chat-header-avatar.is-skull, .profile-avatar.is-skull {
+  background: #334155;
 }
 
 .btn-primary {
