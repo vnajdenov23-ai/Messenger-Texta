@@ -193,6 +193,12 @@
       <button type="button" class="voice-cancel" id="btn-voice-cancel">Отмена</button>
       <button type="button" class="voice-stop" id="btn-voice-stop">Отправить</button>
     </div>
+
+    <div class="chat-blocked-bar hidden" id="chat-blocked-bar">
+      <span class="chat-blocked-icon" id="chat-blocked-icon"></span>
+      <span class="chat-blocked-text" id="chat-blocked-text">Пользователь заблокирован</span>
+      <button type="button" class="chat-blocked-unblock hidden" id="chat-blocked-unblock">Разблокировать</button>
+    </div>
   </section>
 
   <!-- ==================== ЭКРАН НАСТРОЕК ==================== -->
@@ -229,19 +235,45 @@
 
       <label class="field">
         <span class="field-label">Username</span>
-        <input type="text" id="settings-username" disabled>
+        <div class="field-with-copy">
+          <input type="text" id="settings-username" disabled>
+          <button type="button" class="copy-btn" id="copy-username" aria-label="Скопировать username">Копировать</button>
+        </div>
       </label>
 
       <label class="field">
         <span class="field-label">Секретный код входа</span>
-        <input type="text" id="settings-code" disabled>
+        <div class="field-with-copy">
+          <input type="text" id="settings-code" disabled>
+          <button type="button" class="copy-btn" id="copy-code" aria-label="Скопировать код">Копировать</button>
+        </div>
       </label>
+
+      <div class="field">
+        <span class="field-label">Кто видит, что я в сети</span>
+        <div class="privacy-options" id="privacy-options">
+          <button type="button" class="privacy-opt" data-value="visible">Показывать всё</button>
+          <button type="button" class="privacy-opt" data-value="partial">Только "в сети", без времени</button>
+          <button type="button" class="privacy-opt" data-value="hidden">Скрыть полностью</button>
+        </div>
+      </div>
 
       <div class="field-error" id="settings-error"></div>
       <div class="field-success" id="settings-success"></div>
 
       <button class="btn-primary" id="btn-save-settings">Сохранить изменения</button>
       <button class="btn-secondary btn-danger" id="btn-logout">Выйти из аккаунта</button>
+      <button class="btn-secondary btn-danger" id="btn-delete-account">Удалить аккаунт</button>
+    </div>
+
+    <div class="msg-action-sheet" id="delete-account-sheet">
+      <div class="msg-action-backdrop" id="delete-account-backdrop"></div>
+      <div class="msg-action-panel">
+        <div class="avatar-panel-title">Удалить аккаунт?</div>
+        <p class="delete-account-warning">Ваш @username и профиль исчезнут навсегда, войти по старому коду будет нельзя. Переписки у собеседников останутся, но написать вам будет невозможно.</p>
+        <button class="msg-action-btn danger" id="confirm-delete-account">Да, удалить аккаунт</button>
+        <button class="msg-action-btn cancel" id="cancel-delete-account">Отмена</button>
+      </div>
     </div>
   </section>
 
@@ -249,4 +281,4 @@
 
 <script src="app.js"></script>
 </body>
-</html
+</html>
