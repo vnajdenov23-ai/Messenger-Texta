@@ -9,7 +9,6 @@
  * Обязательные переменные окружения (задаются в Render → Environment):
  *   UPSTASH_REDIS_REST_URL
  *   UPSTASH_REDIS_REST_TOKEN
- * (обе берутся со страницы базы данных на upstash.com — раздел "REST API")
  */
 
 const express = require('express');
@@ -19,11 +18,8 @@ const { Redis } = require('@upstash/redis');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Фото и голосовые сообщения (base64) могут быть увесистыми — увеличиваем лимит тела запроса
 app.use(express.json({ limit: '8mb' }));
-app.use(express.static(path.join(__dirname))); // отдаём index.html, style.css, app.js
-
-// ---------- Подключение к Upstash Redis ----------
+app.use(express.static(path.join(__dirname)));
 
 if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
   console.error('ОШИБКА: не заданы UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN.');
@@ -36,14 +32,15 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
 
-const USERS_INDEX_KEY = 'texta:users:index'; // множество всех username (для поиска)
+const USERS_INDEX_KEY = 'texta:users:index';
 const DELETE_FOR_EVERYONE_WINDOW_MS = 60 * 60 * 1000; // 1 час
-const MAX_AVATAR_LENGTH = 400000; // ограничение на размер base64-фото аватарки (~300 КБ файла)
-const MAX_PHOTO_LENGTH = 3000000; // ограничение на размер base64-фото в сообщении (~2.2 МБ файла)
-const MAX_VOICE_LENGTH = 2500000; // ограничение на размер base64-голосового сообщения
+const MAX_AVATAR_LENGTH = 400000;
+const MAX_PHOTO_LENGTH = 3000000;
+const MAX_VOICE_LENGTH = 2500000;
+const ONLINE_THRESHOLD_MS = 45000; // считаем "в сети", если пинг был < 45 сек назад
 
 function generateCode() {
-  const num = Math.floor(100000 + Math.random() * 900000); // 6 цифр
+  const num = Math.floor(100000 + Math.random() * 900000);
   return `TC-${num}`;
 }
 
@@ -76,6 +73,29 @@ async function setUser(user) {
 async function isBlocked(blockerUsername, targetUsername) {
   const blocked = await redis.smembers('texta:blocked:' + cleanUsername(blockerUsername));
   return blocked.includes(cleanUsername(targetUsername));
+}
+
+function formatLastSeen(ts) {
+  if (!ts) return 'давно';
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (sameDay) return `был(а) сегодня в ${hh}:${mm}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `был(а) вчера в ${hh}:${mm}`;
+  return `был(а) ${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+}
+
+function computePresenceText(target) {
+  const mode = target.presencePrivacy || 'visible';
+  const online = Date.now() - (target.lastActiveAt || 0) < ONLINE_THRESHOLD_MS;
+
+  if (mode === 'hidden') return 'был(а) недавно';
+  if (mode === 'partial') return online ? 'в сети' : 'был(а) недавно';
+  return online ? 'в сети' : formatLastSeen(target.lastActiveAt);
 }
 
 // ---------- API: регистрация ----------
@@ -115,7 +135,9 @@ app.post('/api/register', async (req, res) => {
       code,
       createdAt: Date.now(),
       avatarType: 'initial',
-      avatarValue: ''
+      avatarValue: '',
+      presencePrivacy: 'visible',
+      lastActiveAt: Date.now()
     };
     await setUser(user);
 
@@ -142,18 +164,24 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Неверный @username или код входа.' });
     }
 
-    return res.json({ success: true, user: { ...publicUser(user), code: user.code } });
+    user.lastActiveAt = Date.now();
+    await setUser(user);
+
+    return res.json({
+      success: true,
+      user: { ...publicUser(user), code: user.code, presencePrivacy: user.presencePrivacy || 'visible' }
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: 'Ошибка сервера.' });
   }
 });
 
-// ---------- API: обновление профиля (имя + аватарка) ----------
+// ---------- API: обновление профиля (имя + аватарка + приватность) ----------
 
 app.post('/api/profile/update', async (req, res) => {
   try {
-    const { username, code, displayName, avatarType, avatarValue } = req.body || {};
+    const { username, code, displayName, avatarType, avatarValue, presencePrivacy } = req.body || {};
 
     const user = await getUser(username);
     if (!user || user.code.toUpperCase() !== String(code).trim().toUpperCase()) {
@@ -179,16 +207,88 @@ app.post('/api/profile/update', async (req, res) => {
       user.avatarValue = avatarType === 'initial' ? '' : String(avatarValue || '');
     }
 
+    if (presencePrivacy !== undefined) {
+      if (!['visible', 'partial', 'hidden'].includes(presencePrivacy)) {
+        return res.status(400).json({ success: false, message: 'Некорректная настройка приватности.' });
+      }
+      user.presencePrivacy = presencePrivacy;
+    }
+
     await setUser(user);
 
-    return res.json({ success: true, user: { ...publicUser(user), code: user.code } });
+    return res.json({
+      success: true,
+      user: { ...publicUser(user), code: user.code, presencePrivacy: user.presencePrivacy || 'visible' }
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: 'Ошибка сервера.' });
   }
 });
 
-// ---------- API: публичный профиль пользователя (без секретного кода) ----------
+// ---------- API: удаление аккаунта (сам аккаунт уходит, переписки остаются) ----------
+
+app.post('/api/account/delete', async (req, res) => {
+  try {
+    const { username, code } = req.body || {};
+    const user = await getUser(username);
+    if (!user || user.code.toUpperCase() !== String(code).trim().toUpperCase()) {
+      return res.status(401).json({ success: false, message: 'Не удалось подтвердить личность.' });
+    }
+
+    const cleanU = user.username;
+    await redis.del('texta:user:' + cleanU);
+    await redis.srem(USERS_INDEX_KEY, cleanU);
+    // Сообщения, чаты и списки собеседников намеренно не трогаем —
+    // у других участников переписка должна остаться, просто с пометкой "аккаунт удалён".
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Ошибка сервера.' });
+  }
+});
+
+// ---------- API: присутствие (heartbeat + чтение статуса) ----------
+
+app.post('/api/presence/ping', async (req, res) => {
+  try {
+    const user = await getUser(req.body && req.body.username);
+    if (!user) return res.status(404).json({ success: false });
+    user.lastActiveAt = Date.now();
+    await setUser(user);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
+
+app.get('/api/presence', async (req, res) => {
+  try {
+    const viewer = cleanUsername(req.query.viewer);
+    const target = cleanUsername(req.query.username);
+    if (!viewer || !target) return res.status(400).json({ success: false });
+
+    const targetUser = await getUser(target);
+    if (!targetUser) return res.json({ success: true, state: 'deleted' });
+
+    const [iBlockedThem, theyBlockedMe] = await Promise.all([
+      isBlocked(viewer, target),
+      isBlocked(target, viewer)
+    ]);
+    if (iBlockedThem || theyBlockedMe) {
+      return res.json({ success: true, state: 'blocked', iBlockedThem, theyBlockedMe });
+    }
+
+    res.json({ success: true, state: 'ok', text: computePresenceText(targetUser) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ---------- API: публичный профиль пользователя ----------
 
 app.get('/api/profile', async (req, res) => {
   try {
@@ -196,7 +296,7 @@ app.get('/api/profile', async (req, res) => {
     if (!username) return res.status(400).json({ success: false, message: 'Не указан username.' });
 
     const user = await getUser(username);
-    if (!user) return res.status(404).json({ success: false, message: 'Пользователь не найден.' });
+    if (!user) return res.json({ success: true, deleted: true });
 
     res.json({ success: true, user: { ...publicUser(user), createdAt: user.createdAt || 0 } });
   } catch (err) {
@@ -294,6 +394,10 @@ app.post('/api/messages', async (req, res) => {
     }
 
     if (!isFavorite) {
+      const recipientExists = await getUser(withUser);
+      if (!recipientExists) {
+        return res.status(410).json({ success: false, message: 'Этот аккаунт удалён.' });
+      }
       const [recipientBlockedMe, iBlockedRecipient] = await Promise.all([
         isBlocked(withUser, username),
         isBlocked(username, withUser)
@@ -326,11 +430,8 @@ app.post('/api/messages', async (req, res) => {
     if (!isFavorite) {
       const a = cleanUsername(username);
       const b = cleanUsername(withUser);
-      // Записываем чат в общий (серверный) список обоих участников —
-      // чтобы диалог появился у собеседника сам, без ручного поиска.
       await redis.sadd('texta:chats:' + a, b);
       await redis.sadd('texta:chats:' + b, a);
-      // Новая активность в чате возвращает его в список, даже если кто-то его скрывал ("удалил чат")
       await redis.srem('texta:hidden_chats:' + a, b);
       await redis.srem('texta:hidden_chats:' + b, a);
     }
@@ -343,8 +444,6 @@ app.post('/api/messages', async (req, res) => {
 });
 
 // ---------- API: удаление отдельных сообщений ----------
-// mode: 'me' — скрыть сообщение только у себя
-// mode: 'everyone' — удалить у всех, разрешено только автору и только в течение часа после отправки
 
 app.post('/api/messages/delete', async (req, res) => {
   try {
@@ -391,8 +490,6 @@ app.post('/api/messages/delete', async (req, res) => {
 });
 
 // ---------- API: удаление всей переписки целиком ----------
-// mode: 'me' — очистить историю только у себя (собеседник продолжает её видеть)
-// mode: 'everyone' — удалить переписку физически, у всех участников
 
 app.post('/api/conversation/delete', async (req, res) => {
   try {
@@ -421,7 +518,7 @@ app.post('/api/conversation/delete', async (req, res) => {
   }
 });
 
-// ---------- API: удалить чат из списка (не трогая сами сообщения) ----------
+// ---------- API: удалить чат из списка ----------
 
 app.post('/api/chats/delete', async (req, res) => {
   try {
@@ -456,8 +553,9 @@ app.get('/api/chats', async (req, res) => {
     const users = await redis.mget(...visiblePartners.map(u => 'texta:user:' + u));
 
     const chats = await Promise.all(
-      users.filter(Boolean).map(async (u) => {
-        const chatId = chatIdBetween(username, u.username);
+      visiblePartners.map(async (partnerUsername, idx) => {
+        const u = users[idx];
+        const chatId = chatIdBetween(username, partnerUsername);
         const [tail, clearedAt, deletedIds] = await Promise.all([
           redis.lrange('texta:messages:' + chatId, -30, -1),
           redis.get('texta:cleared:' + username + ':' + chatId),
@@ -472,6 +570,19 @@ app.get('/api/chats', async (req, res) => {
         const previewText = lastMsg
           ? (lastMsg.type === 'photo' ? '📷 Фото' : lastMsg.type === 'voice' ? '🎤 Голосовое сообщение' : lastMsg.text)
           : '';
+
+        if (!u) {
+          // Аккаунт собеседника удалён — переписка остаётся, но помечаем как недоступную
+          return {
+            username: partnerUsername,
+            displayName: 'Удалённый аккаунт',
+            avatarType: 'deleted',
+            avatarValue: '',
+            deleted: true,
+            lastMessage: previewText,
+            lastTime: lastMsg ? lastMsg.time : 0
+          };
+        }
 
         return {
           ...publicUser(u),
