@@ -43,9 +43,21 @@
 
   const EMOJI_OPTIONS = ['😀','😎','🐱','🐶','🦊','🐼','🚀','🔥','⭐','🌙','💎','🎨','🍀','🌊','⚡','🎧','🍕','🎮','🌵','🦄'];
 
-  // Возвращает {html, cls} для содержимого аватарки: фото / эмодзи / инициал
+  // Кастомная иконка черепа с зачёркнутыми глазами — для заблокированных/удалённых собеседников
+  function skullIcon() {
+    return `<svg viewBox="0 0 48 48" width="60%" height="60%">
+      <path fill="#cbd5e1" d="M24 4c-9.9 0-16 7.2-16 15.6 0 5.4 2.6 9 5.4 11.4l-.9 6.3c-.2 1.5 1 2.7 2.4 2.7h3.4v-4h3v4h5.4v-4h3v4h3.4c1.5 0 2.6-1.3 2.4-2.7l-.9-6.3C37.4 28.6 40 25 40 19.6 40 11.2 33.9 4 24 4z"/>
+      <path stroke="#0f172a" stroke-width="2.6" stroke-linecap="round" d="M13.5 16.5l6 6m0-6l-6 6M28.5 16.5l6 6m0-6l-6 6"/>
+      <path fill="#0f172a" d="M21 27a3 2.2 0 1 0 6 0 3 2.2 0 1 0-6 0z"/>
+    </svg>`;
+  }
+
+  // Возвращает {html, cls} для содержимого аватарки: фото / эмодзи / инициал / череп
   function avatarContent(u) {
     if (!u) return { html: 'T', cls: '' };
+    if (u.avatarType === 'deleted' || u.avatarType === 'blocked') {
+      return { html: skullIcon(), cls: 'is-skull' };
+    }
     if (u.avatarType === 'photo' && u.avatarValue) {
       return { html: `<img src="${escapeAttr(u.avatarValue)}" alt="">`, cls: '' };
     }
@@ -220,7 +232,25 @@
     renderFavPreview();
     renderChatList();
     startChatListPolling();
+    startPresencePing();
     initAppHandlers();
+  }
+
+  let presencePingTimer = null;
+
+  function sendPresencePing() {
+    if (!session) return;
+    apiPost('/presence/ping', { username: session.username }).catch(() => {});
+  }
+
+  function startPresencePing() {
+    sendPresencePing();
+    clearInterval(presencePingTimer);
+    presencePingTimer = setInterval(sendPresencePing, 20000);
+  }
+
+  function stopPresencePing() {
+    clearInterval(presencePingTimer);
   }
 
   let handlersInitialized = false;
@@ -286,12 +316,28 @@
     $('chat-opt-clear-me').addEventListener('click', () => onClearConversation('me'));
     $('chat-opt-clear-everyone').addEventListener('click', () => onClearConversation('everyone'));
     $('chat-opt-block').addEventListener('click', onToggleBlock);
+    $('chat-blocked-unblock').addEventListener('click', onToggleBlock);
 
     // ---- Настройки ----
     $('btn-open-settings').addEventListener('click', openSettings);
     $('btn-back-from-settings').addEventListener('click', () => showScreen('screen-chats'));
     $('btn-save-settings').addEventListener('click', onSaveSettings);
     $('btn-logout').addEventListener('click', onLogout);
+
+    // ---- Копирование данных профиля ----
+    $('copy-username').addEventListener('click', () => copyToClipboard('@' + session.username, $('copy-username')));
+    $('copy-code').addEventListener('click', () => copyToClipboard(session.code, $('copy-code')));
+
+    // ---- Приватность "в сети" ----
+    $('privacy-options').querySelectorAll('.privacy-opt').forEach(btn => {
+      btn.addEventListener('click', () => onSelectPrivacy(btn.dataset.value));
+    });
+
+    // ---- Удаление аккаунта ----
+    $('btn-delete-account').addEventListener('click', openDeleteAccountSheet);
+    $('delete-account-backdrop').addEventListener('click', closeDeleteAccountSheet);
+    $('cancel-delete-account').addEventListener('click', closeDeleteAccountSheet);
+    $('confirm-delete-account').addEventListener('click', onConfirmDeleteAccount);
 
     // ---- Аватарка ----
     $('settings-avatar').addEventListener('click', openAvatarSheet);
@@ -420,9 +466,9 @@
 
   async function renderFavPreview() {
     try {
-      const data = await apiGet(`/messages?chatId=${encodeURIComponent('fav:' + session.username.toLowerCase())}`);
+      const data = await apiGet(`/messages?chatId=${encodeURIComponent('fav:' + session.username.toLowerCase())}&forUser=${encodeURIComponent(session.username)}`);
       const last = data.messages[data.messages.length - 1];
-      $('fav-preview').textContent = last ? last.text : 'Личные заметки';
+      $('fav-preview').textContent = last ? (last.type === 'photo' ? '📷 Фото' : last.type === 'voice' ? '🎤 Голосовое сообщение' : last.text) : 'Личные заметки';
     } catch (e) {
       $('fav-preview').textContent = 'Личные заметки';
     }
@@ -431,8 +477,6 @@
   // ============================================================
   // ЭКРАН ЧАТА
   // ============================================================
-
-  let chatIsBlockedByMe = false;
 
   function openChat(user, isFavorite) {
     isFavoriteChat = isFavorite;
@@ -459,23 +503,93 @@
 
     $('btn-chat-options').classList.toggle('hidden', isFavorite);
 
+    // Сброс состояния до ответа сервера — иначе на миг может мелькнуть блок предыдущего чата
+    chatAvailability = 'ok';
+    $('chat-blocked-bar').classList.add('hidden');
+    $('form-send').classList.remove('hidden');
+
     $('messages-area').innerHTML = '<div class="msg-empty">Загрузка сообщений...</div>';
     showScreen('screen-chat');
     loadMessages();
 
-    if (!isFavorite) refreshBlockState();
+    if (!isFavorite) refreshChatAvailability();
 
     clearInterval(messagesPollTimer);
     messagesPollTimer = setInterval(loadMessages, 3000);
   }
 
-  async function refreshBlockState() {
+  let chatAvailability = 'ok'; // 'ok' | 'blocked' | 'deleted'
+  let iBlockedThem = false;
+  let theyBlockedMe = false;
+
+  async function refreshChatAvailability() {
+    if (!currentChatPartner) return;
     try {
-      const data = await apiGet(`/block/status?username=${encodeURIComponent(session.username)}&target=${encodeURIComponent(currentChatPartner.username)}`);
-      chatIsBlockedByMe = !!data.blocked;
-      $('chat-opt-block').textContent = chatIsBlockedByMe ? 'Разблокировать' : 'Заблокировать';
+      const data = await apiGet(`/presence?username=${encodeURIComponent(currentChatPartner.username)}&viewer=${encodeURIComponent(session.username)}`);
+
+      if (data.state === 'deleted') {
+        chatAvailability = 'deleted';
+      } else if (data.state === 'blocked') {
+        chatAvailability = 'blocked';
+        iBlockedThem = !!data.iBlockedThem;
+        theyBlockedMe = !!data.theyBlockedMe;
+      } else {
+        chatAvailability = 'ok';
+        $('chat-header-sub').textContent = data.text || '';
+      }
     } catch (e) {
-      // не критично, оставим как есть
+      chatAvailability = 'ok';
+    }
+    updateChatAvailabilityUI();
+  }
+
+  function updateChatAvailabilityUI() {
+    const blockedBar = $('chat-blocked-bar');
+    const inputBar = $('form-send');
+    const headerAvatar = $('chat-header-avatar');
+    const optBlock = $('chat-opt-block');
+
+    if (chatAvailability === 'ok') {
+      blockedBar.classList.add('hidden');
+      inputBar.classList.remove('hidden');
+      optBlock.classList.remove('hidden');
+      optBlock.textContent = 'Заблокировать';
+      if (currentChatPartner) {
+        const av = avatarContent(currentChatPartner);
+        headerAvatar.innerHTML = av.html;
+        headerAvatar.className = 'chat-header-avatar' + (av.cls ? ' ' + av.cls : '');
+      }
+      return;
+    }
+
+    inputBar.classList.add('hidden');
+    $('voice-recorder').classList.add('hidden');
+    blockedBar.classList.remove('hidden');
+    headerAvatar.innerHTML = skullIcon();
+    headerAvatar.className = 'chat-header-avatar is-skull';
+
+    if (chatAvailability === 'deleted') {
+      $('chat-header-sub').textContent = 'Аккаунт удалён';
+      $('chat-blocked-icon').innerHTML = skullIcon();
+      $('chat-blocked-text').textContent = 'Этот аккаунт удалён. Написать нельзя, но старая переписка сохранена.';
+      $('chat-blocked-unblock').classList.add('hidden');
+      optBlock.classList.add('hidden');
+      return;
+    }
+
+    // blocked
+    $('chat-blocked-icon').innerHTML = skullIcon();
+    if (iBlockedThem) {
+      $('chat-header-sub').textContent = 'Заблокирован(а) вами';
+      $('chat-blocked-text').textContent = 'Вы заблокировали этого пользователя.';
+      $('chat-blocked-unblock').classList.remove('hidden');
+      optBlock.textContent = 'Разблокировать';
+      optBlock.classList.remove('hidden');
+    } else {
+      $('chat-header-sub').textContent = 'Недоступен';
+      $('chat-blocked-text').textContent = 'Пользователь заблокировал вас — писать нельзя.';
+      $('chat-blocked-unblock').classList.add('hidden');
+      optBlock.classList.add('hidden');
     }
   }
 
@@ -487,6 +601,16 @@
 
     try {
       const data = await apiGet(`/profile?username=${encodeURIComponent(currentChatPartner.username)}`);
+
+      if (data.deleted) {
+        $('profile-avatar').innerHTML = skullIcon();
+        $('profile-avatar').className = 'profile-avatar is-skull';
+        $('profile-name').textContent = 'Аккаунт удалён';
+        $('profile-username').textContent = '';
+        $('profile-joined').textContent = '';
+        return;
+      }
+
       const u = data.user;
       const av = avatarContent(u);
       $('profile-avatar').innerHTML = av.html;
@@ -553,15 +677,14 @@
   }
 
   async function onToggleBlock() {
-    const newState = !chatIsBlockedByMe;
+    const newState = !iBlockedThem;
     try {
       await apiPost('/block', { username: session.username, target: currentChatPartner.username, block: newState });
-      chatIsBlockedByMe = newState;
-      $('chat-opt-block').textContent = chatIsBlockedByMe ? 'Разблокировать' : 'Заблокировать';
+      closeChatOptions();
+      await refreshChatAvailability();
     } catch (err) {
       alert('Не удалось изменить блокировку: ' + err.message);
     }
-    closeChatOptions();
   }
 
   function currentChatQuery() {
@@ -950,6 +1073,12 @@
     $('settings-code').value = session.code;
     $('settings-error').textContent = '';
     $('settings-success').textContent = '';
+
+    const currentPrivacy = session.presencePrivacy || 'visible';
+    $('privacy-options').querySelectorAll('.privacy-opt').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.value === currentPrivacy);
+    });
+
     showScreen('screen-settings');
   }
 
@@ -979,12 +1108,58 @@
   function onLogout() {
     clearInterval(messagesPollTimer);
     stopChatListPolling();
+    stopPresencePing();
     clearSession();
     handlersInitialized = false;
     $('login-username').value = '';
     $('login-code').value = '';
     switchAuthTab('login');
     showScreen('screen-auth');
+  }
+
+  // ---------- Копирование по кнопке (вместо зажатия текста) ----------
+
+  function copyToClipboard(text, btn) {
+    navigator.clipboard?.writeText(text).then(() => {
+      const original = btn.textContent;
+      btn.textContent = 'Скопировано';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1500);
+    }).catch(() => alert('Не удалось скопировать.'));
+  }
+
+  // ---------- Приватность "в сети" ----------
+
+  async function onSelectPrivacy(value) {
+    $('privacy-options').querySelectorAll('.privacy-opt').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.value === value);
+    });
+    try {
+      await apiPost('/profile/update', { username: session.username, code: session.code, presencePrivacy: value });
+      saveSession({ ...session, presencePrivacy: value });
+    } catch (err) {
+      alert('Не удалось сохранить настройку: ' + err.message);
+    }
+  }
+
+  // ---------- Удаление аккаунта ----------
+
+  function openDeleteAccountSheet() {
+    $('delete-account-sheet').classList.add('active');
+  }
+
+  function closeDeleteAccountSheet() {
+    $('delete-account-sheet').classList.remove('active');
+  }
+
+  async function onConfirmDeleteAccount() {
+    try {
+      await apiPost('/account/delete', { username: session.username, code: session.code });
+      closeDeleteAccountSheet();
+      onLogout();
+    } catch (err) {
+      alert('Не удалось удалить аккаунт: ' + err.message);
+    }
   }
 
   // ---------- Аватарка: панель выбора (фото / эмодзи) ----------
