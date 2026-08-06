@@ -45,10 +45,15 @@
 
   // Кастомная иконка черепа с зачёркнутыми глазами — для заблокированных/удалённых собеседников
   function skullIcon() {
-    return `<svg viewBox="0 0 48 48" width="60%" height="60%">
-      <path fill="#cbd5e1" d="M24 4c-9.9 0-16 7.2-16 15.6 0 5.4 2.6 9 5.4 11.4l-.9 6.3c-.2 1.5 1 2.7 2.4 2.7h3.4v-4h3v4h5.4v-4h3v4h3.4c1.5 0 2.6-1.3 2.4-2.7l-.9-6.3C37.4 28.6 40 25 40 19.6 40 11.2 33.9 4 24 4z"/>
-      <path stroke="#0f172a" stroke-width="2.6" stroke-linecap="round" d="M13.5 16.5l6 6m0-6l-6 6M28.5 16.5l6 6m0-6l-6 6"/>
-      <path fill="#0f172a" d="M21 27a3 2.2 0 1 0 6 0 3 2.2 0 1 0-6 0z"/>
+    return `<svg viewBox="0 0 100 100" width="64%" height="64%">
+      <path fill="#e7ebf1" d="M50 8C29 8 15 24 15 45c0 13 6 22 12 27.5 1 .9 1.5 2.2 1.5 3.5v6c0 3.3 2.7 6 6 6h4v-7a3 3 0 0 1 6 0v7h11v-7a3 3 0 0 1 6 0v7h4c3.3 0 6-2.7 6-6v-6c0-1.3.5-2.6 1.5-3.5C79 67 85 58 85 45 85 24 71 8 50 8z"/>
+      <circle cx="34" cy="46" r="9" fill="#1e2534"/>
+      <circle cx="66" cy="46" r="9" fill="#1e2534"/>
+      <path stroke="#e7ebf1" stroke-width="4" stroke-linecap="round" d="M29 41l10 10m0-10l-10 10M61 41l10 10m0-10l-10 10"/>
+      <path fill="#1e2534" d="M45 58h10l-5 9z"/>
+      <rect x="36" y="74" width="28" height="7" rx="3.5" fill="#1e2534"/>
+      <rect x="36" y="74" width="7" height="7" rx="1.5" fill="#e7ebf1"/>
+      <rect x="50" y="74" width="7" height="7" rx="1.5" fill="#e7ebf1"/>
     </svg>`;
   }
 
@@ -249,6 +254,20 @@
     presencePingTimer = setInterval(sendPresencePing, 20000);
   }
 
+  // Если вкладку закрыли/свернули не через кнопку "Выйти" — всё равно фиксируем точное время
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && session) sendPresenceBeacon();
+  });
+  window.addEventListener('pagehide', () => {
+    if (session) sendPresenceBeacon();
+  });
+
+  function sendPresenceBeacon() {
+    if (!navigator.sendBeacon) return;
+    const blob = new Blob([JSON.stringify({ username: session.username })], { type: 'application/json' });
+    navigator.sendBeacon(API + '/presence/ping', blob);
+  }
+
   function stopPresencePing() {
     clearInterval(presencePingTimer);
   }
@@ -303,6 +322,7 @@
     $('profile-sheet-close').addEventListener('click', closeProfile);
 
     // ---- Удаление сообщений ----
+    $('action-copy').addEventListener('click', copySelectedMessage);
     $('action-delete-me').addEventListener('click', () => deleteSelectedMessage('me'));
     $('action-delete-everyone').addEventListener('click', () => deleteSelectedMessage('everyone'));
     $('action-cancel').addEventListener('click', closeMessageActions);
@@ -336,6 +356,11 @@
     // ---- Удаление аккаунта ----
     $('btn-delete-account').addEventListener('click', openDeleteAccountSheet);
     $('delete-account-backdrop').addEventListener('click', closeDeleteAccountSheet);
+
+    // ---- Универсальное окно подтверждения/инфо ----
+    $('confirm-sheet-ok').addEventListener('click', () => closeConfirmSheet(true));
+    $('confirm-sheet-cancel').addEventListener('click', () => closeConfirmSheet(false));
+    $('confirm-sheet-backdrop').addEventListener('click', () => closeConfirmSheet(false));
     $('cancel-delete-account').addEventListener('click', closeDeleteAccountSheet);
     $('confirm-delete-account').addEventListener('click', onConfirmDeleteAccount);
 
@@ -491,7 +516,7 @@
 
     const headerAvatar = $('chat-header-avatar');
     if (isFavorite) {
-      headerAvatar.innerHTML = '★';
+      headerAvatar.innerHTML = '<svg viewBox="0 0 24 24" width="60%" height="60%"><path fill="currentColor" d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>';
       headerAvatar.className = 'chat-header-avatar';
       headerAvatar.style.background = 'linear-gradient(135deg,#f59e0b,#ef4444)';
     } else {
@@ -653,26 +678,36 @@
   }
 
   async function onDeleteChat() {
-    if (!confirm('Удалить чат из списка? Сообщения не удаляются — если вам напишут снова, чат появится опять.')) return;
+    const ok = await showConfirmSheet({
+      title: 'Удалить чат?',
+      message: 'Сообщения не удаляются — если вам напишут снова, чат появится опять.',
+      okText: 'Удалить'
+    });
+    if (!ok) return;
     try {
       await apiPost('/chats/delete', { username: session.username, withUser: currentChatPartner.username });
       closeChatOptions();
       closeChat();
     } catch (err) {
-      alert('Не удалось удалить чат: ' + err.message);
+      showInfoSheet('Не удалось удалить чат', err.message);
     }
   }
 
   async function onClearConversation(mode) {
     const label = mode === 'everyone' ? 'у всех участников' : 'только у себя';
-    if (!confirm(`Удалить всю переписку ${label}? Это действие нельзя отменить.`)) return;
+    const ok = await showConfirmSheet({
+      title: 'Удалить переписку?',
+      message: `Удалить всю переписку ${label}? Это действие нельзя отменить.`,
+      okText: 'Удалить'
+    });
+    if (!ok) return;
     try {
       await apiPost('/conversation/delete', { username: session.username, withUser: currentChatPartner.username, mode });
       closeChatOptions();
       lastRenderedCount = -1;
       await loadMessages();
     } catch (err) {
-      alert('Не удалось удалить переписку: ' + err.message);
+      showInfoSheet('Не удалось удалить переписку', err.message);
     }
   }
 
@@ -683,7 +718,7 @@
       closeChatOptions();
       await refreshChatAvailability();
     } catch (err) {
-      alert('Не удалось изменить блокировку: ' + err.message);
+      showInfoSheet('Не удалось изменить блокировку', err.message);
     }
   }
 
@@ -726,7 +761,7 @@
       const inner = messageInnerHtml(m);
       return `
         <div class="msg-row ${own ? 'own' : 'other'}">
-          <div class="msg-bubble" data-id="${escapeAttr(m.id)}" data-time="${m.time}" data-own="${own ? '1' : '0'}">${inner}<span class="msg-time">${formatTime(m.time)}</span></div>
+          <div class="msg-bubble" data-id="${escapeAttr(m.id)}" data-time="${m.time}" data-own="${own ? '1' : '0'}" data-type="${m.type || 'text'}" data-text="${escapeAttr(m.text || '')}">${inner}<span class="msg-time">${formatTime(m.time)}</span></div>
         </div>`;
     }).join('');
 
@@ -814,7 +849,7 @@
     });
     audio.play().catch(() => {
       btn.classList.remove('playing');
-      alert('Не удалось воспроизвести голосовое сообщение.');
+      showInfoSheet('Ошибка', 'Не удалось воспроизвести голосовое сообщение.');
     });
   }
 
@@ -854,14 +889,24 @@
     selectedMessage = {
       id: bubble.dataset.id,
       time: Number(bubble.dataset.time),
-      own: bubble.dataset.own === '1'
+      own: bubble.dataset.own === '1',
+      type: bubble.dataset.type,
+      text: bubble.dataset.text
     };
     suppressClickUntil = Date.now() + 400;
 
     const withinHour = Date.now() - selectedMessage.time <= 3600000;
     $('action-delete-everyone').classList.toggle('hidden', !(selectedMessage.own && withinHour));
+    $('action-copy').classList.toggle('hidden', selectedMessage.type !== 'text');
 
     $('msg-action-sheet').classList.add('active');
+  }
+
+  function copySelectedMessage() {
+    if (!selectedMessage || !selectedMessage.text) return;
+    navigator.clipboard?.writeText(selectedMessage.text).then(() => {
+      closeMessageActions();
+    }).catch(() => showInfoSheet('Ошибка', 'Не удалось скопировать сообщение.'));
   }
 
   function closeMessageActions() {
@@ -886,7 +931,7 @@
       lastRenderedCount = -1;
       await loadMessages();
     } catch (err) {
-      alert('Не удалось удалить: ' + err.message);
+      showInfoSheet('Не удалось удалить', err.message);
     } finally {
       closeMessageActions();
     }
@@ -911,7 +956,7 @@
       $('messages-area').scrollTop = $('messages-area').scrollHeight;
     } catch (err) {
       input.value = text; // вернуть текст при ошибке
-      alert('Не удалось отправить: ' + err.message);
+      showInfoSheet('Не удалось отправить', err.message);
     }
   }
 
@@ -928,7 +973,7 @@
       await loadMessages();
       $('messages-area').scrollTop = $('messages-area').scrollHeight;
     } catch (err) {
-      alert('Не удалось отправить: ' + err.message);
+      showInfoSheet('Не удалось отправить', err.message);
     }
   }
 
@@ -955,7 +1000,7 @@
         const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
         sendMediaMessage('photo', dataUrl);
       };
-      img.onerror = () => alert('Не удалось прочитать изображение.');
+      img.onerror = () => showInfoSheet('Ошибка', 'Не удалось прочитать изображение.');
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
@@ -974,7 +1019,7 @@
 
   async function startVoiceRecording() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      alert('Запись голоса не поддерживается этим браузером.');
+      showInfoSheet('Недоступно', 'Запись голоса не поддерживается этим браузером.');
       return;
     }
     try {
@@ -987,6 +1032,9 @@
 
       // Замеряем громкость голоса каждые ~100мс, чтобы построить волну как в Телеграме
       waveformSamples = [];
+      $('voice-live-wave').innerHTML = '';
+      const MAX_LIVE_BARS = 45;
+
       try {
         waveformAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const source = waveformAudioCtx.createMediaStreamSource(stream);
@@ -994,6 +1042,7 @@
         waveformAnalyser.fftSize = 256;
         source.connect(waveformAnalyser);
         const data = new Uint8Array(waveformAnalyser.frequencyBinCount);
+        const liveWave = $('voice-live-wave');
 
         waveformSampleInterval = setInterval(() => {
           waveformAnalyser.getByteTimeDomainData(data);
@@ -1003,7 +1052,16 @@
             sumSquares += v * v;
           }
           const rms = Math.sqrt(sumSquares / data.length);
-          waveformSamples.push(Math.min(1, rms * 4.5));
+          const level = Math.min(1, rms * 4.5);
+          waveformSamples.push(level);
+
+          // Живая отрисовка: новый столбик справа, старые уходят влево (как при реальной записи)
+          const bar = document.createElement('span');
+          bar.style.height = Math.max(3, Math.round(level * 24)) + 'px';
+          liveWave.appendChild(bar);
+          while (liveWave.children.length > MAX_LIVE_BARS) {
+            liveWave.removeChild(liveWave.firstChild);
+          }
         }, 100);
       } catch (waveErr) {
         // Волна — приятное дополнение, не критично, если Web Audio API недоступен
@@ -1017,7 +1075,7 @@
         $('voice-timer').textContent = formatDuration(elapsed);
       }, 500);
     } catch (err) {
-      alert('Не удалось получить доступ к микрофону: ' + err.message);
+      showInfoSheet('Нет доступа к микрофону', err.message);
     }
   }
 
@@ -1106,6 +1164,7 @@
   }
 
   function onLogout() {
+    sendPresencePing(); // фиксируем точное время последнего визита в момент выхода
     clearInterval(messagesPollTimer);
     stopChatListPolling();
     stopPresencePing();
@@ -1125,7 +1184,7 @@
       btn.textContent = 'Скопировано';
       btn.classList.add('copied');
       setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1500);
-    }).catch(() => alert('Не удалось скопировать.'));
+    }).catch(() => showInfoSheet('Ошибка', 'Не удалось скопировать.'));
   }
 
   // ---------- Приватность "в сети" ----------
@@ -1138,7 +1197,41 @@
       await apiPost('/profile/update', { username: session.username, code: session.code, presencePrivacy: value });
       saveSession({ ...session, presencePrivacy: value });
     } catch (err) {
-      alert('Не удалось сохранить настройку: ' + err.message);
+      showInfoSheet('Не удалось сохранить', err.message);
+    }
+  }
+
+  // ---------- Универсальное окно подтверждения / информации (вместо confirm/alert) ----------
+
+  let confirmSheetResolve = null;
+
+  function showConfirmSheet({ title, message, okText = 'Да', cancelText = 'Отмена', danger = true }) {
+    $('confirm-sheet-title').textContent = title;
+    $('confirm-sheet-message').textContent = message;
+    $('confirm-sheet-ok').textContent = okText;
+    $('confirm-sheet-ok').classList.toggle('danger', danger);
+    $('confirm-sheet-cancel').textContent = cancelText;
+    $('confirm-sheet-cancel').classList.remove('hidden');
+    $('confirm-sheet').classList.add('active');
+    return new Promise(resolve => { confirmSheetResolve = resolve; });
+  }
+
+  function showInfoSheet(title, message) {
+    $('confirm-sheet-title').textContent = title;
+    $('confirm-sheet-message').textContent = message;
+    $('confirm-sheet-ok').textContent = 'Понятно';
+    $('confirm-sheet-ok').classList.remove('danger');
+    $('confirm-sheet-cancel').classList.add('hidden');
+    $('confirm-sheet').classList.add('active');
+    return new Promise(resolve => { confirmSheetResolve = () => resolve(); });
+  }
+
+  function closeConfirmSheet(result) {
+    $('confirm-sheet').classList.remove('active');
+    if (confirmSheetResolve) {
+      const r = confirmSheetResolve;
+      confirmSheetResolve = null;
+      r(result);
     }
   }
 
@@ -1158,7 +1251,7 @@
       closeDeleteAccountSheet();
       onLogout();
     } catch (err) {
-      alert('Не удалось удалить аккаунт: ' + err.message);
+      showInfoSheet('Не удалось удалить аккаунт', err.message);
     }
   }
 
@@ -1204,7 +1297,7 @@
         const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
         saveAvatar('photo', dataUrl);
       };
-      img.onerror = () => alert('Не удалось прочитать изображение.');
+      img.onerror = () => showInfoSheet('Ошибка', 'Не удалось прочитать изображение.');
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
@@ -1224,7 +1317,7 @@
       $('settings-avatar').className = 'settings-avatar' + (av.cls ? ' ' + av.cls : '');
       closeAvatarSheet();
     } catch (err) {
-      alert('Не удалось сохранить аватарку: ' + err.message);
+      showInfoSheet('Не удалось сохранить аватарку', err.message);
     }
   }
 
