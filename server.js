@@ -584,6 +584,22 @@ app.get('/api/chats', async (req, res) => {
           };
         }
 
+        const [iBlockedThem, theyBlockedMe] = await Promise.all([
+          isBlocked(username, partnerUsername),
+          isBlocked(partnerUsername, username)
+        ]);
+
+        if (iBlockedThem || theyBlockedMe) {
+          return {
+            ...publicUser(u),
+            avatarType: 'blocked',
+            avatarValue: '',
+            blocked: true,
+            lastMessage: previewText,
+            lastTime: lastMsg ? lastMsg.time : 0
+          };
+        }
+
         return {
           ...publicUser(u),
           lastMessage: previewText,
