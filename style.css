@@ -29,13 +29,13 @@
 * { box-sizing: border-box; }
 
 /* Отключаем выделение/копирование зажатием по всему интерфейсу — копирование теперь только через явные кнопки */
-body, button, .chat-row, .msg-bubble, .chat-header, .topbar, .settings-body, .msg-action-panel {
+body, body * {
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
 
-input, textarea {
+input:not(:disabled), textarea {
   user-select: text;
   -webkit-user-select: text;
   -webkit-touch-callout: default;
@@ -790,7 +790,25 @@ button {
   50% { opacity: .3; }
 }
 
-.voice-hint { color: var(--text-faint); font-size: 12.5px; margin-right: auto; }
+.voice-live-wave {
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+  height: 24px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  margin-right: 8px;
+}
+
+.voice-live-wave span {
+  flex-shrink: 0;
+  width: 3px;
+  min-height: 3px;
+  border-radius: 2px;
+  background: var(--blue);
+  transition: height .08s linear;
+}
 
 .voice-cancel, .voice-stop {
   border: none;
