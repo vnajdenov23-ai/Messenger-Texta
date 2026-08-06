@@ -166,6 +166,7 @@
     <div class="msg-action-sheet" id="msg-action-sheet">
       <div class="msg-action-backdrop" id="msg-action-backdrop"></div>
       <div class="msg-action-panel">
+        <button class="msg-action-btn" id="action-copy">Копировать</button>
         <button class="msg-action-btn" id="action-delete-me">Удалить у себя</button>
         <button class="msg-action-btn danger" id="action-delete-everyone">Удалить у всех</button>
         <button class="msg-action-btn cancel" id="action-cancel">Отмена</button>
@@ -189,7 +190,7 @@
     <div class="voice-recorder hidden" id="voice-recorder">
       <div class="voice-recorder-dot"></div>
       <span id="voice-timer">0:00</span>
-      <span class="voice-hint">Идёт запись...</span>
+      <div class="voice-live-wave" id="voice-live-wave"></div>
       <button type="button" class="voice-cancel" id="btn-voice-cancel">Отмена</button>
       <button type="button" class="voice-stop" id="btn-voice-stop">Отправить</button>
     </div>
@@ -276,6 +277,16 @@
       </div>
     </div>
   </section>
+
+  <div class="msg-action-sheet" id="confirm-sheet">
+    <div class="msg-action-backdrop" id="confirm-sheet-backdrop"></div>
+    <div class="msg-action-panel">
+      <div class="avatar-panel-title" id="confirm-sheet-title">Подтвердите</div>
+      <p class="delete-account-warning" id="confirm-sheet-message"></p>
+      <button class="msg-action-btn danger" id="confirm-sheet-ok">Да</button>
+      <button class="msg-action-btn cancel" id="confirm-sheet-cancel">Отмена</button>
+    </div>
+  </div>
 
 </div>
 
